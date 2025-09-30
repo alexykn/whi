@@ -55,7 +55,6 @@ pub struct FileMetadata {
 pub struct SearchResult {
     pub path: PathBuf,
     pub canonical_path: Option<PathBuf>,
-    pub is_executable: bool,
     pub metadata: Option<FileMetadata>,
     pub path_index: usize,
 }

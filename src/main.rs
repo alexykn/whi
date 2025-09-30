@@ -11,7 +11,7 @@ mod path;
 
 use cli::{Args, ColorWhen};
 use executor::{ExecutableCheck, SearchResult};
-use output::{ExplainFormatter, OutputFormatter};
+use output::OutputFormatter;
 use path::PathSearcher;
 
 fn main() {
@@ -36,23 +36,27 @@ fn main() {
 }
 
 fn run(args: &Args) -> i32 {
-    let names = get_names(args);
-    if names.is_empty() {
-        if !args.silent {
-            eprintln!("Error: no names provided");
-        }
-        return 2;
-    }
-
     let path_var = match &args.path_override {
         Some(p) => p.clone(),
         None => env::var("PATH").unwrap_or_default(),
     };
 
     let searcher = PathSearcher::new(&path_var);
-    let mut all_found = true;
     let stdout = io::stdout();
     let mut out = BufWriter::new(stdout.lock());
+
+    let names = get_names(args);
+
+    // If no names provided, show all PATH entries
+    if names.is_empty() {
+        for (idx, dir) in searcher.dirs().iter().enumerate() {
+            writeln!(out, "[{}] {}", idx + 1, dir.display()).ok();
+        }
+        out.flush().ok();
+        return 0;
+    }
+
+    let mut all_found = true;
     let stderr = io::stderr();
     let mut err = BufWriter::new(stderr.lock());
 
@@ -65,22 +69,10 @@ fn run(args: &Args) -> i32 {
         if results.is_empty() {
             all_found = false;
 
-            if args.explain && !args.silent {
-                let explain = ExplainFormatter::new(use_color);
-                explain
-                    .write_explanation(&mut err, &name, &searcher, &results, args)
-                    .ok();
-            } else if !args.silent && !args.quiet {
+            if !args.silent && !args.quiet {
                 writeln!(err, "{name}: not found").ok();
             }
             continue;
-        }
-
-        if args.explain {
-            let explain = ExplainFormatter::new(use_color);
-            explain
-                .write_explanation(&mut err, &name, &searcher, &results, args)
-                .ok();
         }
 
         // Output results
@@ -93,13 +85,24 @@ fn run(args: &Args) -> i32 {
                     result,
                     is_winner,
                     args.follow_symlinks,
-                    args.explain,
                     args.index,
                 )
                 .ok();
 
             if args.one {
                 break;
+            }
+        }
+
+        // If -f/--full, show full PATH listing after results
+        if args.full {
+            writeln!(out).ok();
+            for (idx, dir) in searcher.dirs().iter().enumerate() {
+                if args.index {
+                    writeln!(out, "[{}] {}", idx + 1, dir.display()).ok();
+                } else {
+                    writeln!(out, "{}", dir.display()).ok();
+                }
             }
         }
     }
@@ -115,16 +118,21 @@ fn get_names(args: &Args) -> Vec<String> {
         return args.names.clone();
     }
 
-    // Read from stdin
-    let stdin = io::stdin();
-    let mut names = Vec::new();
-    for line in stdin.lock().lines().map_while(Result::ok) {
-        let trimmed = line.trim();
-        if !trimmed.is_empty() && !trimmed.starts_with('#') {
-            names.push(trimmed.to_string());
+    // Only read from stdin if it's piped (not a TTY)
+    if !atty::is(atty::Stream::Stdin) {
+        let stdin = io::stdin();
+        let mut names = Vec::new();
+        for line in stdin.lock().lines().map_while(Result::ok) {
+            let trimmed = line.trim();
+            if !trimmed.is_empty() && !trimmed.starts_with('#') {
+                names.push(trimmed.to_string());
+            }
         }
+        return names;
     }
-    names
+
+    // No names and stdin is a TTY - return empty
+    Vec::new()
 }
 
 fn search_name(searcher: &PathSearcher, name: &str, args: &Args) -> Vec<SearchResult> {
@@ -177,7 +185,6 @@ fn check_path(path: &Path, args: &Args, path_index: usize) -> Option<SearchResul
     Some(SearchResult {
         path: path.to_path_buf(),
         canonical_path,
-        is_executable,
         metadata,
         path_index,
     })
@@ -195,12 +202,13 @@ fn should_use_color(args: &Args) -> bool {
 mod atty {
     use std::fs::File;
 
-    pub fn is(_: Stream) -> bool {
+    pub fn is(_stream: Stream) -> bool {
         // Try to open /dev/tty - if it works, we're probably connected to a terminal
         File::open("/dev/tty").is_ok()
     }
 
     pub enum Stream {
         Stdout,
+        Stdin,
     }
 }

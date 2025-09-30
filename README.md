@@ -1,16 +1,19 @@
 # whicha
 
-List **all** PATH hits for a command and explain why one wins.
+List **all** PATH hits for a command with their PATH indices.
 
-`whicha` is a tiny CLI tool that scans your PATH and shows you every executable match for one or more names. It clearly indicates which candidate would be chosen first (the winner) and can provide detailed reasoning with the `-e/--explain` flag.
+`whicha` is a tiny CLI tool that scans your PATH and shows you every executable match for one or more names. It can show PATH indices, follow symlinks, display file metadata, and list the complete PATH.
 
 ## Features
 
 - **See all matches**: Unlike `which`, shows every executable in PATH, not just the first
 - **Winner indication**: Clearly marks which executable would actually run with color
-- **Explain mode** (`-e`): Shows hits with PATH indices in a compact format
-- **Full mode** (`-e -f`): Complete PATH listing with detailed reasoning
-- **Pipe-friendly**: Quiet by default, results to stdout, explanations to stderr
+- **PATH indices** (`-i`): Shows the PATH index for each match
+- **Full PATH listing** (`-f`): Displays complete PATH with indices
+- **Follow symlinks** (`-l`): Resolves and shows canonical targets
+- **File metadata** (`-s`): Shows inode, device, size, and modification time
+- **Combinable flags**: Unix-style flag combining (e.g., `-isl`, `-of`)
+- **Pipe-friendly**: Quiet by default, all output to stdout
 - **Unix-focused**: Clean implementation for Unix-like systems
 - **Zero dependencies**: Pure Rust standard library only
 
@@ -38,47 +41,28 @@ $ whicha python
 /usr/bin/python
 ```
 
-With explanation (hits-only mode):
+With PATH indices:
 
 ```bash
-$ whicha -e python
-/usr/local/bin/python
-/usr/bin/python
-
-[whicha] python
-  [1] /usr/local/bin/python (winner)
-  [23] /usr/bin/python (shadowed)
-
-Winner: earliest PATH hit is [#1].
-
+$ whicha -i python
+[1] /usr/local/bin/python
+[23] /usr/bin/python
 ```
 
-Full explanation with complete PATH listing (flags can be combined):
+Show full PATH listing (flags can be combined):
 
 ```bash
-$ whicha -ef gcc    # same as -e -f
+$ whicha python -if
 
-[whicha] gcc
+[1] /usr/local/bin/python
+[23] /usr/bin/python
 
-PATH (72 entries)
-  [1] /opt/homebrew/bin
-  [2] /opt/homebrew/sbin
-  ...
-  [23] /opt/pm/live/bin
-  ...
-  [61] /usr/bin
-  ...
-  [72] /Applications/Ghostty.app/Contents/MacOS
-
-Found:
-  [23] /opt/pm/live/bin/gcc (winner)
-  [61] /usr/bin/gcc (shadowed)
-
-Winner: earliest PATH hit is [#23].
-
-Note: shell aliases/functions/builtins aren't visible to whicha.
-      Use 'type -a gcc' in your shell to see all matches.
-
+[1] /opt/homebrew/bin
+[2] /opt/homebrew/sbin
+...
+[23] /usr/bin
+...
+[72] /Applications/Ghostty.app/Contents/MacOS
 ```
 
 Multiple names:
@@ -124,11 +108,11 @@ $ whicha --path="/usr/local/bin:/usr/bin" python
 
 ### Flags
 
-Short flags can be combined Unix-style (e.g., `-ef` = `-e -f`, `-os` = `-o -s`, `-eos` = `-e -o -s`).
+Short flags can be combined Unix-style (e.g., `-if` = `-i -f`, `-isl` = `-i -s -l`).
 
-- `-e, --explain` - Show hits with PATH indices to stderr
-- `-f, --full` - With `-e`: include full PATH directory listing
-- `-L, --follow-symlinks` - Resolve and show canonical targets
+- `-f, --full` - Show full PATH directory listing
+- `-i, --index` - Show PATH index next to each entry
+- `-l, -L, --follow-symlinks` - Resolve and show canonical targets
 - `-o, --one` - Only print the first match per name
 - `-s, --stat` - Include inode/device/mtime/size metadata
 - `-0, --print0` - NUL-separated output for use with xargs
@@ -157,10 +141,10 @@ Find all versions of Python in PATH:
 $ whicha python python3 python3.11
 ```
 
-Check which node would run and why:
+Check which node would run with indices:
 
 ```bash
-$ whicha -e node
+$ whicha -i node
 ```
 
 Use with xargs to check executables:
@@ -169,10 +153,10 @@ Use with xargs to check executables:
 $ whicha -0 --one python node cargo | xargs -0 -n1 file
 ```
 
-Find shadowed commands:
+Find all versions with metadata:
 
 ```bash
-$ whicha -e gcc | grep shadowed
+$ whicha -is gcc
 ```
 
 ## Comparison with `which`
@@ -181,8 +165,11 @@ $ whicha -e gcc | grep shadowed
 |---------|---------|----------|
 | Show first match | ✓ | ✓ |
 | Show all matches | Some versions with `-a` | ✓ Always |
-| Explain why | ✗ | ✓ With `-e` |
-| Follow symlinks | Some versions | ✓ With `-L` |
+| Show PATH indices | ✗ | ✓ With `-i` |
+| Full PATH listing | ✗ | ✓ With `-f` |
+| Follow symlinks | Some versions | ✓ With `-l/-L` |
+| File metadata | ✗ | ✓ With `-s` |
+| Combinable flags | ✗ | ✓ |
 | Multiple names | ✓ | ✓ |
 | Stdin input | ✗ | ✓ |
 | Pipe-friendly | Varies | ✓ |
@@ -191,10 +178,10 @@ $ whicha -e gcc | grep shadowed
 
 I wanted to know:
 - What other versions of a command exist on my PATH?
-- Which one would actually run?
-- Why is *that* one chosen over the others?
+- Which PATH directory does each one come from?
+- What's my complete PATH?
 
-`which -a` shows all matches on some systems, but doesn't explain the selection logic or provide structured output for scripting. `whicha` does both.
+`which -a` shows all matches on some systems, but doesn't show PATH indices or provide the full PATH context. `whicha` gives you the complete picture with simple, combinable flags.
 
 ## License
 

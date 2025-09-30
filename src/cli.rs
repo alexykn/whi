@@ -11,7 +11,6 @@ pub enum ColorWhen {
 #[derive(Debug)]
 pub struct Args {
     pub names: Vec<String>,
-    pub explain: bool,
     pub full: bool,
     pub follow_symlinks: bool,
     pub print0: bool,
@@ -29,7 +28,6 @@ impl Args {
     pub fn parse() -> Result<Self, String> {
         let mut args = Args {
             names: Vec::new(),
-            explain: false,
             full: false,
             follow_symlinks: false,
             print0: false,
@@ -89,10 +87,9 @@ impl Args {
         expect_color: &mut bool,
     ) -> Result<(), String> {
         match arg {
-            "-e" | "--explain" => args.explain = true,
             "-f" | "--full" => args.full = true,
             "-i" | "--index" => args.index = true,
-            "-L" | "--follow-symlinks" => args.follow_symlinks = true,
+            "-l" | "-L" | "--follow-symlinks" => args.follow_symlinks = true,
             "-o" | "--one" => args.one = true,
             "-0" | "--print0" => args.print0 = true,
             "-q" | "--quiet" => args.quiet = true,
@@ -127,10 +124,9 @@ impl Args {
         // Handle combined short flags like -ef, -eL, -efL
         for ch in s[1..].chars() {
             match ch {
-                'e' => args.explain = true,
                 'f' => args.full = true,
                 'i' => args.index = true,
-                'L' => args.follow_symlinks = true,
+                'l' | 'L' => args.follow_symlinks = true,
                 'o' => args.one = true,
                 's' => args.stat = true,
                 '0' => args.print0 = true,
@@ -155,10 +151,10 @@ USAGE:
     whicha [FLAGS] [OPTIONS]          # names from stdin
 
 FLAGS:
-    -e, --explain          Show hits with PATH indices to stderr
-    -f, --full             With -e: include full PATH directory listing
+    -f, --full             Show full PATH directory listing
     -i, --index            Show PATH index next to each entry
-    -L, --follow-symlinks  Resolve and show canonical targets
+    -l, -L, --follow-symlinks
+                           Resolve and show canonical targets
     -s, --stat             Include inode/device/mtime/size metadata
     -0, --print0           NUL-separated output for xargs
     -q, --quiet            Suppress non-fatal stderr warnings
