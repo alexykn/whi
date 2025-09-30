@@ -1,98 +1,113 @@
-# whicha
+# whi
 
-List **all** PATH hits for a command with their PATH indices.
+**Magically simple PATH management**
 
-`whicha` is a tiny CLI tool that scans your PATH and shows you every executable match for one or more names. It can show PATH indices, follow symlinks, display file metadata, and list the complete PATH.
+`whi` is a powerful `which` replacement with PATH manipulation. Find executables, see all matches, and reorder your PATH with simple shell commands.
 
 ## Features
 
-- **See all matches**: Unlike `which`, shows every executable in PATH, not just the first
+- **Better than which**: Shows winner by default, all matches with `-a`
+- **PATH manipulation**: Move, swap, and prefer executables with shell integration
 - **Winner indication**: Clearly marks which executable would actually run with color
 - **PATH indices** (`-i`): Shows the PATH index for each match
 - **Full PATH listing** (`-f`): Displays complete PATH with indices
 - **Follow symlinks** (`-l`): Resolves and shows canonical targets
 - **File metadata** (`-s`): Shows inode, device, size, and modification time
-- **Combinable flags**: Unix-style flag combining (e.g., `-isl`, `-of`)
+- **Combinable flags**: Unix-style flag combining (e.g., `-ais`, `-ifl`)
 - **Pipe-friendly**: Quiet by default, all output to stdout
-- **Unix-focused**: Clean implementation for Unix-like systems
-- **Zero dependencies**: Pure Rust standard library only
+- **Zero dependencies**: Only libc for isatty(3)
 
 ## Installation
 
 ```bash
-cargo install whicha
+cargo install whi
 ```
 
 Or build from source:
 
 ```bash
-git clone https://github.com/alexykn/whicha
-cd whicha
+git clone https://github.com/alexykn/whi
+cd whi
 cargo build --release
 ```
 
-## Usage
+## Quick Start
 
-Basic usage - show all matches:
+### Shell Integration (Recommended)
+
+Add to your shell config (e.g., `~/.bashrc`, `~/.zshrc`, or `~/.config/fish/config.fish`):
 
 ```bash
-$ whicha python
-/usr/local/bin/python
-/usr/bin/python
+# bash/zsh
+eval "$(whi init bash)"  # or zsh
+
+# fish
+whi init fish | source
 ```
 
-With PATH indices:
+This provides four powerful commands:
+- `whim FROM TO` - Move PATH entry
+- `whis IDX1 IDX2` - Swap PATH entries
+- `whip NAME INDEX` - Prefer executable at INDEX (make it win)
+- `whia NAME` - Show all matches with indices (shortcut for `whi -ia`)
+
+### Basic Usage
+
+Find an executable (like `which`):
 
 ```bash
-$ whicha -i python
-[1] /usr/local/bin/python
-[23] /usr/bin/python
+$ whi cargo
+/Users/user/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo
 ```
 
-Show full PATH listing (flags can be combined):
+See all matches with `-a`:
 
 ```bash
-$ whicha python -if
-
-[1] /usr/local/bin/python
-[23] /usr/bin/python
-
-[1] /opt/homebrew/bin
-[2] /opt/homebrew/sbin
-...
-[23] /usr/bin
-...
-[72] /Applications/Ghostty.app/Contents/MacOS
-```
-
-Multiple names:
-
-```bash
-$ whicha python node cargo
-/usr/local/bin/python
-/usr/bin/python
-/usr/local/bin/node
+$ whi -a cargo
+/Users/user/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo
 /opt/homebrew/bin/cargo
-/usr/local/bin/cargo
+/Users/user/.cargo/bin/cargo
 ```
 
-Show only the winner with `--one`:
+With PATH indices (or use `whia cargo` shortcut):
 
 ```bash
-$ whicha --one python
-/usr/local/bin/python
+$ whi -ai cargo
+[40] /Users/user/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo
+[41] /opt/homebrew/bin/cargo
+[50] /Users/user/.cargo/bin/cargo
+```
+
+### PATH Manipulation
+
+Make a different version win:
+
+```bash
+$ whip cargo 50  # Move cargo at index 50 to win
+```
+
+Move PATH entries around:
+
+```bash
+$ whim 10 1      # Move entry 10 to position 1
+```
+
+Swap two PATH entries:
+
+```bash
+$ whis 10 41     # Swap entries at 10 and 41
 ```
 
 Read names from stdin:
 
 ```bash
-$ echo -e "python\\nnode\\ncargo" | whicha
+$ echo -e "python\\nnode\\ncargo" | whi
 ```
 
 Follow symlinks (shows original → canonical):
 
 ```bash
-$ whicha -L cargo
+$ whi -aL cargo
 /opt/homebrew/bin/cargo → /opt/homebrew/Cellar/rustup/1.28.2/bin/rustup-init
 /Users/user/.cargo/bin/cargo → /Users/user/.cargo/bin/rustup
 /Users/user/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo
@@ -101,15 +116,16 @@ $ whicha -L cargo
 Override PATH:
 
 ```bash
-$ whicha --path="/usr/local/bin:/usr/bin" python
+$ whi --path="/usr/local/bin:/usr/bin" python
 ```
 
 ## Options
 
 ### Flags
 
-Short flags can be combined Unix-style (e.g., `-if` = `-i -f`, `-isl` = `-i -s -l`).
+Short flags can be combined Unix-style (e.g., `-ai` = `-a -i`, `-ais` = `-a -i -s`).
 
+- `-a, --all` - Show all PATH matches (default: only winner)
 - `-f, --full` - Show full PATH directory listing
 - `-i, --index` - Show PATH index next to each entry
 - `-l, -L, --follow-symlinks` - Resolve and show canonical targets
@@ -120,6 +136,12 @@ Short flags can be combined Unix-style (e.g., `-if` = `-i -f`, `-isl` = `-i -s -
 - `--silent` - Print nothing to stderr, use exit codes only
 - `--show-nonexec` - Also list files that exist but aren't executable
 - `-h, --help` - Print help information
+
+### PATH Manipulation
+
+- `--move <FROM> <TO>` - Move PATH entry from index FROM to index TO
+- `--swap <IDX1> <IDX2>` - Swap PATH entries at indices IDX1 and IDX2
+- `--prefer <NAME> <INDEX>` - Make executable NAME at INDEX win
 
 ### Options
 
@@ -138,37 +160,38 @@ Short flags can be combined Unix-style (e.g., `-if` = `-i -f`, `-isl` = `-i -s -
 Find all versions of Python in PATH:
 
 ```bash
-$ whicha python python3 python3.11
+$ whi -a python python3 python3.11
 ```
 
 Check which node would run with indices:
 
 ```bash
-$ whicha -i node
+$ whi -i node
 ```
 
 Use with xargs to check executables:
 
 ```bash
-$ whicha -0 --one python node cargo | xargs -0 -n1 file
+$ whi -0 python node cargo | xargs -0 -n1 file
 ```
 
 Find all versions with metadata:
 
 ```bash
-$ whicha -is gcc
+$ whi -ais gcc
 ```
 
 ## Comparison with `which`
 
-| Feature | `which` | `whicha` |
+| Feature | `which` | `whi` |
 |---------|---------|----------|
-| Show first match | ✓ | ✓ |
-| Show all matches | Some versions with `-a` | ✓ Always |
+| Show first match | ✓ | ✓ (default) |
+| Show all matches | Some versions with `-a` | ✓ With `-a` |
 | Show PATH indices | ✗ | ✓ With `-i` |
 | Full PATH listing | ✗ | ✓ With `-f` |
 | Follow symlinks | Some versions | ✓ With `-l/-L` |
 | File metadata | ✗ | ✓ With `-s` |
+| PATH manipulation | ✗ | ✓ With shell integration |
 | Combinable flags | ✗ | ✓ |
 | Multiple names | ✓ | ✓ |
 | Stdin input | ✗ | ✓ |
@@ -176,12 +199,13 @@ $ whicha -is gcc
 
 ## Why?
 
-I wanted to know:
-- What other versions of a command exist on my PATH?
-- Which PATH directory does each one come from?
-- What's my complete PATH?
+Ever wonder:
+- Which version of `python` or `node` is actually running?
+- How to make a different version win without editing shell configs?
+- What other versions exist on your PATH?
+- What's the actual order of your PATH directories?
 
-`which -a` shows all matches on some systems, but doesn't show PATH indices or provide the full PATH context. `whicha` gives you the complete picture with simple, combinable flags.
+`whi` answers all these questions and lets you manipulate your PATH on the fly with simple shell commands.
 
 ## License
 

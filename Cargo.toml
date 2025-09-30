@@ -1,10 +1,10 @@
 [package]
-name = "whicha"
+name = "whi"
 version = "0.1.0"
 edition = "2021"
 authors = ["Alexander Knott <alexander.knott@posteo.de>"]
-description = "List all PATH hits for a command and explain why one wins"
-repository = "https://github.com/alexykn/whicha"
+description = "Magically simple PATH management - improved which with PATH manipulation"
+repository = "https://github.com/alexykn/whi"
 readme = "README.md"
 keywords = ["cli", "path", "which", "executable", "unix"]
 categories = ["command-line-utilities"]

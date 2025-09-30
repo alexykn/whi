@@ -7,16 +7,16 @@ pub fn generate_init_script(shell: &str) -> Result<String, String> {
     }
 }
 
-const BASH_INIT: &str = r#"# whicha shell integration for bash
+const BASH_INIT: &str = r#"# whi shell integration for bash
 
-whichm() {
+whim() {
     if [ "$#" -ne 2 ]; then
-        echo "Usage: whichm FROM TO" >&2
+        echo "Usage: whim FROM TO" >&2
         return 2
     fi
 
     local new_path
-    new_path=$(whicha --move "$1" "$2")
+    new_path=$(whi --move "$1" "$2")
     if [ $? -eq 0 ]; then
         export PATH="$new_path"
     else
@@ -24,32 +24,14 @@ whichm() {
     fi
 }
 
-whichs() {
+whis() {
     if [ "$#" -ne 2 ]; then
-        echo "Usage: whichs IDX1 IDX2" >&2
+        echo "Usage: whis IDX1 IDX2" >&2
         return 2
     fi
 
     local new_path
-    new_path=$(whicha --swap "$1" "$2")
-    if [ $? -eq 0 ]; then
-        export PATH="$new_path"
-    else
-        return $?
-    fi
-}
-"#;
-
-const ZSH_INIT: &str = r#"# whicha shell integration for zsh
-
-whichm() {
-    if [ "$#" -ne 2 ]; then
-        echo "Usage: whichm FROM TO" >&2
-        return 2
-    fi
-
-    local new_path
-    new_path=$(whicha --move "$1" "$2")
+    new_path=$(whi --swap "$1" "$2")
     if [ $? -eq 0 ]; then
         export PATH="$new_path"
     else
@@ -57,31 +39,87 @@ whichm() {
     fi
 }
 
-whichs() {
+whip() {
     if [ "$#" -ne 2 ]; then
-        echo "Usage: whichs IDX1 IDX2" >&2
+        echo "Usage: whip NAME INDEX" >&2
         return 2
     fi
 
     local new_path
-    new_path=$(whicha --swap "$1" "$2")
+    new_path=$(whi --prefer "$1" "$2")
     if [ $? -eq 0 ]; then
         export PATH="$new_path"
     else
         return $?
     fi
+}
+
+whia() {
+    whi -ia "$@"
 }
 "#;
 
-const FISH_INIT: &str = r#"# whicha shell integration for fish
+const ZSH_INIT: &str = r#"# whi shell integration for zsh
 
-function whichm
+whim() {
+    if [ "$#" -ne 2 ]; then
+        echo "Usage: whim FROM TO" >&2
+        return 2
+    fi
+
+    local new_path
+    new_path=$(whi --move "$1" "$2")
+    if [ $? -eq 0 ]; then
+        export PATH="$new_path"
+    else
+        return $?
+    fi
+}
+
+whis() {
+    if [ "$#" -ne 2 ]; then
+        echo "Usage: whis IDX1 IDX2" >&2
+        return 2
+    fi
+
+    local new_path
+    new_path=$(whi --swap "$1" "$2")
+    if [ $? -eq 0 ]; then
+        export PATH="$new_path"
+    else
+        return $?
+    fi
+}
+
+whip() {
+    if [ "$#" -ne 2 ]; then
+        echo "Usage: whip NAME INDEX" >&2
+        return 2
+    fi
+
+    local new_path
+    new_path=$(whi --prefer "$1" "$2")
+    if [ $? -eq 0 ]; then
+        export PATH="$new_path"
+    else
+        return $?
+    fi
+}
+
+whia() {
+    whi -ia "$@"
+}
+"#;
+
+const FISH_INIT: &str = r#"# whi shell integration for fish
+
+function whim
     if test (count $argv) -ne 2
-        echo "Usage: whichm FROM TO" >&2
+        echo "Usage: whim FROM TO" >&2
         return 2
     end
 
-    set -l new_path (whicha --move $argv[1] $argv[2])
+    set -l new_path (whi --move $argv[1] $argv[2])
     if test $status -eq 0
         set -gx PATH (string split : $new_path)
     else
@@ -89,17 +127,35 @@ function whichm
     end
 end
 
-function whichs
+function whis
     if test (count $argv) -ne 2
-        echo "Usage: whichs IDX1 IDX2" >&2
+        echo "Usage: whis IDX1 IDX2" >&2
         return 2
     end
 
-    set -l new_path (whicha --swap $argv[1] $argv[2])
+    set -l new_path (whi --swap $argv[1] $argv[2])
     if test $status -eq 0
         set -gx PATH (string split : $new_path)
     else
         return $status
     end
+end
+
+function whip
+    if test (count $argv) -ne 2
+        echo "Usage: whip NAME INDEX" >&2
+        return 2
+    end
+
+    set -l new_path (whi --prefer $argv[1] $argv[2])
+    if test $status -eq 0
+        set -gx PATH (string split : $new_path)
+    else
+        return $status
+    end
+end
+
+function whia
+    whi -ia $argv
 end
 "#;

@@ -11,6 +11,7 @@ pub enum ColorWhen {
 #[derive(Debug)]
 pub struct Args {
     pub names: Vec<String>,
+    pub all: bool,
     pub full: bool,
     pub follow_symlinks: bool,
     pub print0: bool,
@@ -24,13 +25,16 @@ pub struct Args {
     pub index: bool,
     pub move_indices: Option<(usize, usize)>,
     pub swap_indices: Option<(usize, usize)>,
+    pub prefer_target: Option<(String, usize)>,
     pub init_shell: Option<String>,
 }
 
 impl Args {
+    #[allow(clippy::too_many_lines)]
     pub fn parse() -> Result<Self, String> {
         let mut args = Args {
             names: Vec::new(),
+            all: false,
             full: false,
             follow_symlinks: false,
             print0: false,
@@ -44,6 +48,7 @@ impl Args {
             index: false,
             move_indices: None,
             swap_indices: None,
+            prefer_target: None,
             init_shell: None,
         };
 
@@ -62,8 +67,10 @@ impl Args {
         let mut expect_color = false;
         let mut expect_move_from = false;
         let mut expect_swap_from = false;
+        let mut expect_prefer_name = false;
         let mut move_from: Option<usize> = None;
         let mut swap_from: Option<usize> = None;
+        let mut prefer_name: Option<String> = None;
 
         for arg in args_vec {
             if expect_path {
@@ -114,6 +121,21 @@ impl Args {
                 continue;
             }
 
+            if expect_prefer_name {
+                prefer_name = Some(arg);
+                expect_prefer_name = false;
+                continue;
+            }
+
+            if let Some(name) = prefer_name {
+                let idx = arg
+                    .parse::<usize>()
+                    .map_err(|_| format!("Invalid prefer index: {arg}"))?;
+                args.prefer_target = Some((name, idx));
+                prefer_name = None;
+                continue;
+            }
+
             Self::process_arg(
                 &mut args,
                 &arg,
@@ -121,6 +143,7 @@ impl Args {
                 &mut expect_color,
                 &mut expect_move_from,
                 &mut expect_swap_from,
+                &mut expect_prefer_name,
             )?;
         }
 
@@ -135,6 +158,9 @@ impl Args {
         }
         if expect_swap_from || swap_from.is_some() {
             return Err("--swap requires two indices: IDX1 IDX2".to_string());
+        }
+        if expect_prefer_name || prefer_name.is_some() {
+            return Err("--prefer requires NAME and INDEX".to_string());
         }
 
         Ok(args)
@@ -156,13 +182,16 @@ impl Args {
         expect_color: &mut bool,
         expect_move_from: &mut bool,
         expect_swap_from: &mut bool,
+        expect_prefer_name: &mut bool,
     ) -> Result<(), String> {
         match arg {
+            "-a" | "--all" => args.all = true,
             "-f" | "--full" => args.full = true,
             "-i" | "--index" => args.index = true,
             "-l" | "-L" | "--follow-symlinks" => args.follow_symlinks = true,
             "--move" => *expect_move_from = true,
             "--swap" => *expect_swap_from = true,
+            "--prefer" => *expect_prefer_name = true,
             "-o" | "--one" => args.one = true,
             "-0" | "--print0" => args.print0 = true,
             "-q" | "--quiet" => args.quiet = true,
@@ -194,9 +223,10 @@ impl Args {
     }
 
     fn parse_combined_flags(args: &mut Args, s: &str) -> Result<(), String> {
-        // Handle combined short flags like -ef, -eL, -efL
+        // Handle combined short flags like -af, -ail, -aifL
         for ch in s[1..].chars() {
             match ch {
+                'a' => args.all = true,
                 'f' => args.full = true,
                 'i' => args.index = true,
                 'l' | 'L' => args.follow_symlinks = true,
@@ -217,16 +247,18 @@ impl Args {
 
 fn print_help() {
     println!(
-        "whicha - list all PATH hits and explain why one wins
+        "whi - magically simple PATH management
 
 USAGE:
-    whicha [FLAGS] [OPTIONS] <NAME>...
-    whicha [FLAGS] [OPTIONS]            # names from stdin
-    whicha --move <FROM> <TO>           # reorder PATH
-    whicha --swap <IDX1> <IDX2>         # swap PATH entries
-    whicha init <SHELL>                 # output shell integration
+    whi [FLAGS] [OPTIONS] <NAME>...
+    whi [FLAGS] [OPTIONS]            # names from stdin
+    whi --move <FROM> <TO>           # reorder PATH
+    whi --swap <IDX1> <IDX2>         # swap PATH entries
+    whi --prefer <NAME> <INDEX>      # prefer executable at INDEX
+    whi init <SHELL>                 # output shell integration
 
 FLAGS:
+    -a, --all              Show all PATH matches (default: only winner)
     -f, --full             Show full PATH directory listing
     -i, --index            Show PATH index next to each entry
     -l, -L, --follow-symlinks
@@ -243,23 +275,28 @@ PATH MANIPULATION:
         --move <FROM> <TO> Move PATH entry from index FROM to index TO
         --swap <IDX1> <IDX2>
                            Swap PATH entries at indices IDX1 and IDX2
+        --prefer <NAME> <INDEX>
+                           Make executable NAME at INDEX win by moving it
+                           just before the current winner (minimal change)
 
 OPTIONS:
         --path <PATH>      Override environment PATH string
         --color <WHEN>     Colorize output: auto, never, always [default: auto]
 
 SHELL INTEGRATION:
-    whicha init bash       Output bash integration code
-    whicha init zsh        Output zsh integration code
-    whicha init fish       Output fish integration code
+    whi init bash       Output bash integration code
+    whi init zsh        Output zsh integration code
+    whi init fish       Output fish integration code
 
     Add to your shell config:
-        bash/zsh: eval \"$(whicha init bash)\" or eval \"$(whicha init zsh)\"
-        fish:     whicha init fish | source
+        bash/zsh: eval \"$(whi init bash)\" or eval \"$(whi init zsh)\"
+        fish:     whi init fish | source
 
     Provides shell commands to manipulate PATH in current shell:
-        whichm 10 1   # Move PATH entry 10 to position 1
-        whichs 10 41  # Swap PATH entries 10 and 41
+        whim 10 1      # Move PATH entry 10 to position 1
+        whis 10 41     # Swap PATH entries 10 and 41
+        whip cargo 50  # Make cargo at index 50 the winner
+        whia cargo     # Show all cargo matches with indices (whi -ia)
 
 EXIT CODES:
     0  All names found

@@ -36,6 +36,7 @@ fn main() {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn run(args: &Args) -> i32 {
     // Handle init subcommand
     if let Some(ref shell) = args.init_shell {
@@ -94,6 +95,11 @@ fn run(args: &Args) -> i32 {
         }
     }
 
+    // Handle --prefer operation
+    if let Some((ref name, target_idx)) = args.prefer_target {
+        return handle_prefer(&searcher, name, target_idx, args, &mut out);
+    }
+
     let names = get_names(args);
 
     // If no names provided, show all PATH entries
@@ -138,7 +144,9 @@ fn run(args: &Args) -> i32 {
                 )
                 .ok();
 
-            if args.one {
+            // By default, only show the winner (like `which`)
+            // Show all with --all flag
+            if !args.all || args.one {
                 break;
             }
         }
@@ -244,6 +252,62 @@ fn should_use_color(args: &Args) -> bool {
         ColorWhen::Always => true,
         ColorWhen::Never => false,
         ColorWhen::Auto => atty::is(atty::Stream::Stdout),
+    }
+}
+
+fn handle_prefer<W: Write>(
+    searcher: &PathSearcher,
+    name: &str,
+    target_idx: usize,
+    args: &Args,
+    out: &mut W,
+) -> i32 {
+    // Search for all occurrences of the executable
+    let results = search_name(searcher, name, args);
+
+    if results.is_empty() {
+        if !args.silent {
+            eprintln!("Error: {name}: not found");
+        }
+        return 1;
+    }
+
+    // Find the current winner (first occurrence)
+    let winner_idx = results[0].path_index;
+
+    // Check if target_idx is in the results
+    let target_result = results.iter().find(|r| r.path_index == target_idx);
+    if target_result.is_none() {
+        if !args.silent {
+            eprintln!("Error: {name} not found at index {target_idx}");
+        }
+        return 2;
+    }
+
+    // Calculate the minimal move: move target to just before the winner
+    let new_position = if target_idx > winner_idx {
+        winner_idx
+    } else {
+        // Already before winner, no change needed
+        if !args.silent {
+            eprintln!("Error: {name} at index {target_idx} is already preferred over index {winner_idx}");
+        }
+        return 2;
+    };
+
+    // Perform the move
+    match searcher.move_entry(target_idx, new_position) {
+        Ok(new_path) => {
+            writeln!(out, "{new_path}").ok();
+            out.flush().ok();
+            0
+        }
+        Err(e) => {
+            if !args.silent {
+                eprintln!("Error: {e}");
+            }
+            2
+        }
     }
 }
 
