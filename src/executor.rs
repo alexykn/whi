@@ -39,6 +39,7 @@ impl<'a> ExecutableCheck<'a> {
             ino: metadata.ino(),
             size: metadata.len(),
             mtime: metadata.modified().ok(),
+            ctime: metadata.created().ok(),
         })
     }
 }
@@ -49,6 +50,7 @@ pub struct FileMetadata {
     pub ino: u64,
     pub size: u64,
     pub mtime: Option<std::time::SystemTime>,
+    pub ctime: Option<std::time::SystemTime>,
 }
 
 #[derive(Debug)]

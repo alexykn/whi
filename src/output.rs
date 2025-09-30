@@ -55,6 +55,9 @@ impl OutputFormatter {
                 "  inode: {}, device: {}, size: {} bytes",
                 meta.ino, meta.dev, meta.size
             )?;
+            if let Some(ctime) = meta.ctime {
+                writeln!(out, "  created:  {}", Self::format_time(ctime))?;
+            }
             if let Some(mtime) = meta.mtime {
                 writeln!(out, "  modified: {}", Self::format_time(mtime))?;
             }
