@@ -80,7 +80,7 @@ These commands actually modify your current shell's PATH environment variable, s
 
 ### Basic Usage
 
-Find an executable (like `which`):
+Find an executable (like `which`) - shows only the winner:
 
 ```bash
 $ whi cargo
@@ -96,54 +96,119 @@ $ whi -a cargo
 /Users/user/.cargo/bin/cargo
 ```
 
-With PATH indices (or use `whia cargo` shortcut):
+With PATH indices using `-i` (or use `whia cargo` shortcut):
 
 ```bash
 $ whi -ai cargo
-[40] /Users/user/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo
-[41] /opt/homebrew/bin/cargo
-[50] /Users/user/.cargo/bin/cargo
+[1] /Users/user/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo
+[2] /opt/homebrew/bin/cargo
+[5] /Users/user/.cargo/bin/cargo
 ```
 
-### PATH Manipulation
-
-Make a different version win:
+Follow symlinks with `-l` to see what they point to:
 
 ```bash
-$ whip cargo 50  # Move cargo at index 50 to win
+$ whi -ail cargo
+[1] /Users/user/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo
+[2] /opt/homebrew/bin/cargo → /opt/homebrew/Cellar/rustup/1.28.2/bin/rustup-init
+[5] /Users/user/.cargo/bin/cargo → /Users/user/.cargo/bin/rustup
 ```
 
-Move PATH entries around:
+Show detailed metadata with `-s`:
 
 ```bash
-$ whim 10 1      # Move entry 10 to position 1
+$ whi -as cargo
+/Users/user/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo
+  inode: 152583153, device: 16777233, size: 30854216 bytes
+  created:  2025-09-27 10:30:17
+  modified: 2025-09-27 10:30:17
+/opt/homebrew/bin/cargo
+  inode: 103789726, device: 16777233, size: 11154288 bytes
+  created:  2025-04-28 15:56:34
+  modified: 2025-04-28 15:56:34
+/Users/user/.cargo/bin/cargo
+  inode: 117539552, device: 16777233, size: 11174016 bytes
+  created:  2025-09-03 07:12:56
+  modified: 2025-09-03 07:12:56
+```
+
+Combine flags for all matches with indices and symlinks:
+
+```bash
+$ whi -ail python
+[3] /usr/local/bin/python → /usr/local/Cellar/python@3.11/3.11.5/bin/python3.11
+[8] /usr/bin/python
+[12] /opt/homebrew/bin/python → /opt/homebrew/Cellar/python@3.12/3.12.0/bin/python3.12
+```
+
+### PATH Manipulation Examples
+
+See which cargo is winning and make a different one win:
+
+```bash
+$ whia cargo
+[1] /Users/user/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo
+[2] /opt/homebrew/bin/cargo
+[5] /Users/user/.cargo/bin/cargo
+
+$ whip cargo 5    # Make cargo at index 5 the winner
+$ whia cargo
+[1] /Users/user/.cargo/bin/cargo
+[2] /Users/user/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo
+[3] /opt/homebrew/bin/cargo
+```
+
+Move PATH entries to reorder them:
+
+```bash
+$ whim 10 1      # Move entry at index 10 to position 1
+$ whim 50 3      # Move entry at index 50 to position 3
 ```
 
 Swap two PATH entries:
 
 ```bash
-$ whis 10 41     # Swap entries at 10 and 41
+$ whis 10 41     # Swap entries at indices 10 and 41
 ```
 
-Read names from stdin:
+### Other Usage Examples
+
+Read multiple names from stdin:
 
 ```bash
 $ echo -e "python\\nnode\\ncargo" | whi
+/usr/bin/python
+/usr/local/bin/node
+/Users/user/.cargo/bin/cargo
 ```
 
-Follow symlinks (shows original → canonical):
+Check multiple executables at once:
 
 ```bash
-$ whi -aL cargo
-/opt/homebrew/bin/cargo → /opt/homebrew/Cellar/rustup/1.28.2/bin/rustup-init
-/Users/user/.cargo/bin/cargo → /Users/user/.cargo/bin/rustup
-/Users/user/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo
+$ whi python node cargo gcc
+/usr/bin/python
+/usr/local/bin/node
+/Users/user/.cargo/bin/cargo
+/usr/bin/gcc
 ```
 
-Override PATH:
+Show full PATH listing:
+
+```bash
+$ whi -f
+[1] /Users/user/.rustup/toolchains/stable-aarch64-apple-darwin/bin
+[2] /opt/homebrew/bin
+[3] /usr/local/bin
+[4] /usr/bin
+[5] /Users/user/.cargo/bin
+...
+```
+
+Use custom PATH:
 
 ```bash
 $ whi --path="/usr/local/bin:/usr/bin" python
+/usr/local/bin/python
 ```
 
 ## Command-Line Options
