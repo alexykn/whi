@@ -290,7 +290,9 @@ fn handle_prefer<W: Write>(
     } else {
         // Already before winner, no change needed
         if !args.silent {
-            eprintln!("Error: {name} at index {target_idx} is already preferred over index {winner_idx}");
+            eprintln!(
+                "Error: {name} at index {target_idx} is already preferred over index {winner_idx}"
+            );
         }
         return 2;
     };
