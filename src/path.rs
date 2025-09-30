@@ -4,18 +4,73 @@ pub struct PathSearcher {
     dirs: Vec<PathBuf>,
 }
 
+/// Validate a PATH entry for suspicious or malicious content
+fn validate_path_entry(path: &str) -> Result<(), String> {
+    // Check for null bytes
+    if path.contains('\0') {
+        return Err("PATH entry contains null byte".to_string());
+    }
+
+    // Check for control characters (except tab which is valid)
+    for ch in path.chars() {
+        if ch.is_control() && ch != '\t' {
+            return Err(format!("PATH entry contains control character: {:?}", ch));
+        }
+    }
+
+    Ok(())
+}
+
+/// Warn about potentially dangerous PATH entries
+fn warn_suspicious_path(path: &str) {
+    // Warn about shell metacharacters that could be dangerous
+    const DANGEROUS_CHARS: &[char] = &['$', '`', ';', '&', '|', '<', '>', '(', ')', '{', '}'];
+
+    for &ch in DANGEROUS_CHARS {
+        if path.contains(ch) {
+            eprintln!(
+                "Warning: PATH entry contains shell metacharacter '{}': {}",
+                ch, path
+            );
+            return;
+        }
+    }
+
+    // Warn about relative paths (but don't reject)
+    if !path.starts_with('/') && !path.is_empty() && path != "." {
+        eprintln!("Warning: Relative PATH entry detected: {}", path);
+    }
+}
+
 impl PathSearcher {
     pub fn new(path_var: &str) -> Self {
+        let mut has_empty = false;
+
         let dirs: Vec<PathBuf> = path_var
             .split(':')
-            .map(|s| {
+            .filter_map(|s| {
+                // Check for empty components
                 if s.is_empty() {
-                    PathBuf::from(".")
-                } else {
-                    PathBuf::from(s)
+                    has_empty = true;
+                    return None; // Skip empty components instead of treating as "."
                 }
+
+                // Validate entry
+                if let Err(e) = validate_path_entry(s) {
+                    eprintln!("Warning: Skipping invalid PATH entry: {}", e);
+                    return None;
+                }
+
+                // Warn about suspicious entries
+                warn_suspicious_path(s);
+
+                Some(PathBuf::from(s))
             })
             .collect();
+
+        if has_empty {
+            eprintln!("Warning: Empty PATH component(s) detected and skipped. Empty components can be a security risk.");
+        }
 
         PathSearcher { dirs }
     }
@@ -29,10 +84,22 @@ impl PathSearcher {
 
         // Validate indices (1-based)
         if from == 0 || to == 0 {
-            return Err("indices must be >= 1".to_string());
+            return Err(format!(
+                "Invalid index: indices must be >= 1 (got from={}, to={})",
+                from, to
+            ));
         }
-        if from > len || to > len {
-            return Err(format!("index out of bounds (PATH has {len} entries)"));
+        if from > len {
+            return Err(format!(
+                "Index {} out of bounds (PATH has {} entries)",
+                from, len
+            ));
+        }
+        if to > len {
+            return Err(format!(
+                "Index {} out of bounds (PATH has {} entries)",
+                to, len
+            ));
         }
 
         // Convert to 0-based
@@ -57,10 +124,22 @@ impl PathSearcher {
 
         // Validate indices (1-based)
         if idx1 == 0 || idx2 == 0 {
-            return Err("indices must be >= 1".to_string());
+            return Err(format!(
+                "Invalid index: indices must be >= 1 (got idx1={}, idx2={})",
+                idx1, idx2
+            ));
         }
-        if idx1 > len || idx2 > len {
-            return Err(format!("index out of bounds (PATH has {len} entries)"));
+        if idx1 > len {
+            return Err(format!(
+                "Index {} out of bounds (PATH has {} entries)",
+                idx1, len
+            ));
+        }
+        if idx2 > len {
+            return Err(format!(
+                "Index {} out of bounds (PATH has {} entries)",
+                idx2, len
+            ));
         }
 
         // Convert to 0-based
@@ -102,10 +181,13 @@ impl PathSearcher {
 
         // Validate index (1-based)
         if idx == 0 {
-            return Err("index must be >= 1".to_string());
+            return Err(format!("Invalid index: {} (must be >= 1)", idx));
         }
         if idx > len {
-            return Err(format!("index out of bounds (PATH has {len} entries)"));
+            return Err(format!(
+                "Index {} out of bounds (PATH has {} entries)",
+                idx, len
+            ));
         }
 
         // Convert to 0-based
@@ -129,11 +211,12 @@ impl PathSearcher {
         // Validate all indices (1-based)
         for &idx in indices {
             if idx == 0 {
-                return Err("indices must be >= 1".to_string());
+                return Err(format!("Invalid index: {} (indices must be >= 1)", idx));
             }
             if idx > len {
                 return Err(format!(
-                    "index {idx} out of bounds (PATH has {len} entries)"
+                    "Index {} out of bounds (PATH has {} entries)",
+                    idx, len
                 ));
             }
         }
@@ -206,7 +289,9 @@ mod tests {
         let searcher = PathSearcher::new("/a:/b:/c");
         let result = searcher.move_entry(0, 2);
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "indices must be >= 1");
+        let err = result.unwrap_err();
+        assert!(err.contains("must be >= 1"));
+        assert!(err.contains("0"));
     }
 
     #[test]
@@ -243,7 +328,9 @@ mod tests {
         let searcher = PathSearcher::new("/a:/b:/c");
         let result = searcher.swap_entries(0, 2);
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "indices must be >= 1");
+        let err = result.unwrap_err();
+        assert!(err.contains("must be >= 1"));
+        assert!(err.contains("0"));
     }
 
     #[test]
@@ -290,7 +377,7 @@ mod tests {
     fn test_clean_empty() {
         let searcher = PathSearcher::new("");
         let (result, removed) = searcher.clean_duplicates();
-        assert_eq!(result, ".");
+        assert_eq!(result, "");
         assert!(removed.is_empty());
     }
 
@@ -344,7 +431,9 @@ mod tests {
         let searcher = PathSearcher::new("/a:/b:/c");
         let result = searcher.delete_entry(0);
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "index must be >= 1");
+        let err = result.unwrap_err();
+        assert!(err.contains("must be >= 1"));
+        assert!(err.contains("0"));
     }
 
     #[test]
@@ -388,7 +477,9 @@ mod tests {
         let searcher = PathSearcher::new("/a:/b:/c");
         let result = searcher.delete_entries(&[1, 0, 3]);
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "indices must be >= 1");
+        let err = result.unwrap_err();
+        assert!(err.contains("must be >= 1"));
+        assert!(err.contains("0"));
     }
 
     #[test]
@@ -404,5 +495,71 @@ mod tests {
         let searcher = PathSearcher::new("/a:/b:/c:/d:/e");
         let result = searcher.delete_entries(&[3]).unwrap();
         assert_eq!(result, "/a:/b:/d:/e");
+    }
+
+    // Security tests
+
+    #[test]
+    fn test_path_validation_null_byte() {
+        let result = validate_path_entry("hello\0world");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("null byte"));
+    }
+
+    #[test]
+    fn test_path_validation_control_chars() {
+        let result = validate_path_entry("hello\x01world");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("control character"));
+    }
+
+    #[test]
+    fn test_path_validation_tab_allowed() {
+        // Tab is a valid character in paths
+        let result = validate_path_entry("hello\tworld");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_path_validation_newline_rejected() {
+        let result = validate_path_entry("hello\nworld");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_empty_path_components_skipped() {
+        // Empty components should be skipped, not treated as "."
+        let searcher = PathSearcher::new("/a::/b");
+        let dirs = searcher.dirs();
+        assert_eq!(dirs.len(), 2);
+        assert_eq!(dirs[0].to_str().unwrap(), "/a");
+        assert_eq!(dirs[1].to_str().unwrap(), "/b");
+    }
+
+    #[test]
+    fn test_malicious_path_filtered() {
+        // Path with null byte should be filtered out
+        let searcher = PathSearcher::new("/good:/bad\0path:/alsogood");
+        let dirs = searcher.dirs();
+        // Only /good and /alsogood should remain
+        assert_eq!(dirs.len(), 2);
+        assert_eq!(dirs[0].to_str().unwrap(), "/good");
+        assert_eq!(dirs[1].to_str().unwrap(), "/alsogood");
+    }
+
+    #[test]
+    fn test_error_messages_include_values() {
+        let searcher = PathSearcher::new("/a:/b:/c");
+
+        // Test zero index error includes the value
+        let err = searcher.move_entry(0, 2).unwrap_err();
+        assert!(err.contains("0"));
+        assert!(err.contains("must be >= 1"));
+
+        // Test out of bounds error includes the value
+        let err = searcher.move_entry(5, 2).unwrap_err();
+        assert!(err.contains("5"));
+        assert!(err.contains("out of bounds"));
+        assert!(err.contains("3 entries"));
     }
 }

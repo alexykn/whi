@@ -1,7 +1,9 @@
 use std::fs;
+use std::io::Write;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::atomic_file::AtomicFile;
 use crate::shell_detect::{get_config_file_path, get_saved_path_file, get_sourcing_line, Shell};
 
 /// Save the current PATH for a shell
@@ -13,9 +15,35 @@ pub fn save_path(shell: &Shell, path: &str) -> Result<(), String> {
         fs::create_dir_all(parent).map_err(|e| format!("Failed to create .whi directory: {e}"))?;
     }
 
-    // Write PATH to file
-    fs::write(&saved_path_file, path)
-        .map_err(|e| format!("Failed to write saved PATH file: {e}"))?;
+    // Create backup if file exists
+    if saved_path_file.exists() {
+        let backup_path = saved_path_file.with_extension("bak");
+        let mut atomic_backup = AtomicFile::new(&backup_path)
+            .map_err(|e| format!("Failed to create backup file: {e}"))?;
+
+        let existing_content = fs::read_to_string(&saved_path_file)
+            .map_err(|e| format!("Failed to read existing PATH file: {e}"))?;
+
+        atomic_backup
+            .write_all(existing_content.as_bytes())
+            .map_err(|e| format!("Failed to write backup: {e}"))?;
+
+        atomic_backup
+            .commit()
+            .map_err(|e| format!("Failed to commit backup: {e}"))?;
+    }
+
+    // Write PATH atomically
+    let mut atomic_file = AtomicFile::new(&saved_path_file)
+        .map_err(|e| format!("Failed to create PATH file: {e}"))?;
+
+    atomic_file
+        .write_all(path.as_bytes())
+        .map_err(|e| format!("Failed to write PATH: {e}"))?;
+
+    atomic_file
+        .commit()
+        .map_err(|e| format!("Failed to commit PATH file: {e}"))?;
 
     // Ensure whi integration exists in config file
     ensure_whi_integration(shell)?;
@@ -75,8 +103,17 @@ pub fn ensure_whi_integration(shell: &Shell) -> Result<(), String> {
         format!("{existing_content}\n\n{sourcing_line}")
     };
 
-    fs::write(&config_file, new_content)
-        .map_err(|e| format!("Failed to write config file: {e}"))?;
+    // Write atomically
+    let mut atomic_file =
+        AtomicFile::new(&config_file).map_err(|e| format!("Failed to create config file: {e}"))?;
+
+    atomic_file
+        .write_all(new_content.as_bytes())
+        .map_err(|e| format!("Failed to write config: {e}"))?;
+
+    atomic_file
+        .commit()
+        .map_err(|e| format!("Failed to commit config file: {e}"))?;
 
     Ok(())
 }

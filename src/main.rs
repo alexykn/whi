@@ -4,6 +4,7 @@ use std::io::{self, BufRead, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process;
 
+mod atomic_file;
 mod cli;
 mod config_manager;
 mod executor;
@@ -13,6 +14,7 @@ mod path_diff;
 mod session_tracker;
 mod shell_detect;
 mod shell_integration;
+mod system;
 
 use cli::{Args, ColorWhen};
 use executor::{ExecutableCheck, SearchResult};
@@ -95,10 +97,13 @@ fn run(args: &Args) -> i32 {
                 .collect();
 
             if !removed_paths.is_empty() {
-                let ppid = unsafe { libc::getppid() as u32 };
-                if let Err(e) = session_tracker::write_operation(ppid, "deleted", &removed_paths) {
-                    if !args.quiet && !args.silent {
-                        eprintln!("Warning: Failed to log operation: {e}");
+                if let Ok(ppid) = system::get_parent_pid() {
+                    if let Err(e) =
+                        session_tracker::write_operation(ppid, "deleted", &removed_paths)
+                    {
+                        if !args.quiet && !args.silent {
+                            eprintln!("Warning: Failed to log operation: {e}");
+                        }
                     }
                 }
             }
@@ -135,12 +140,13 @@ fn run(args: &Args) -> i32 {
             Ok(new_path) => {
                 // Log deleted paths to session file
                 if !deleted_paths.is_empty() {
-                    let ppid = unsafe { libc::getppid() as u32 };
-                    if let Err(e) =
-                        session_tracker::write_operation(ppid, "deleted", &deleted_paths)
-                    {
-                        if !args.quiet && !args.silent {
-                            eprintln!("Warning: Failed to log operation: {e}");
+                    if let Ok(ppid) = system::get_parent_pid() {
+                        if let Err(e) =
+                            session_tracker::write_operation(ppid, "deleted", &deleted_paths)
+                        {
+                            if !args.quiet && !args.silent {
+                                eprintln!("Warning: Failed to log operation: {e}");
+                            }
                         }
                     }
                 }
@@ -172,10 +178,11 @@ fn run(args: &Args) -> i32 {
             Ok(new_path) => {
                 // Log moved path to session file
                 if let Some(path) = moved_path {
-                    let ppid = unsafe { libc::getppid() as u32 };
-                    if let Err(e) = session_tracker::write_operation(ppid, "moved", &[path]) {
-                        if !args.quiet && !args.silent {
-                            eprintln!("Warning: Failed to log operation: {e}");
+                    if let Ok(ppid) = system::get_parent_pid() {
+                        if let Err(e) = session_tracker::write_operation(ppid, "moved", &[path]) {
+                            if !args.quiet && !args.silent {
+                                eprintln!("Warning: Failed to log operation: {e}");
+                            }
                         }
                     }
                 }
@@ -210,12 +217,13 @@ fn run(args: &Args) -> i32 {
             Ok(new_path) => {
                 // Log swapped paths to session file
                 if !swapped_paths.is_empty() {
-                    let ppid = unsafe { libc::getppid() as u32 };
-                    if let Err(e) =
-                        session_tracker::write_operation(ppid, "swapped", &swapped_paths)
-                    {
-                        if !args.quiet && !args.silent {
-                            eprintln!("Warning: Failed to log operation: {e}");
+                    if let Ok(ppid) = system::get_parent_pid() {
+                        if let Err(e) =
+                            session_tracker::write_operation(ppid, "swapped", &swapped_paths)
+                        {
+                            if !args.quiet && !args.silent {
+                                eprintln!("Warning: Failed to log operation: {e}");
+                            }
                         }
                     }
                 }
@@ -483,10 +491,11 @@ fn handle_prefer<W: Write>(
         Ok(new_path) => {
             // Log preferred path to session file
             if let Some(path) = preferred_path {
-                let ppid = unsafe { libc::getppid() as u32 };
-                if let Err(e) = session_tracker::write_operation(ppid, "preferred", &[path]) {
-                    if !args.quiet && !args.silent {
-                        eprintln!("Warning: Failed to log operation: {e}");
+                if let Ok(ppid) = system::get_parent_pid() {
+                    if let Err(e) = session_tracker::write_operation(ppid, "preferred", &[path]) {
+                        if !args.quiet && !args.silent {
+                            eprintln!("Warning: Failed to log operation: {e}");
+                        }
                     }
                 }
             }
@@ -576,9 +585,21 @@ fn handle_save(shell_opt: &Option<String>) -> i32 {
 
     // After successful save, clear session log and cleanup old sessions
     if result == 0 {
-        let ppid = unsafe { libc::getppid() as u32 };
-        let _ = clear_session(ppid); // Ignore errors
-        let _ = cleanup_old_sessions(); // Ignore errors
+        if let Ok(ppid) = system::get_parent_pid() {
+            if let Err(e) = clear_session(ppid) {
+                eprintln!("Warning: Failed to clear session log: {}", e);
+            }
+        }
+
+        match cleanup_old_sessions() {
+            Ok(count) if count > 0 => {
+                eprintln!("Cleaned up {} old session file(s)", count);
+            }
+            Err(e) => {
+                eprintln!("Warning: Failed to cleanup old sessions: {}", e);
+            }
+            _ => {}
+        }
     }
 
     result
@@ -622,9 +643,10 @@ fn handle_diff(shell_opt: &Option<String>, full: bool) -> i32 {
     };
 
     // Get PPID (parent shell PID) to read affected and deleted paths
-    let ppid = unsafe { libc::getppid() as u32 };
-    let (affected_paths, deleted_paths) =
-        read_session_paths(ppid).unwrap_or_else(|_| (std::collections::HashSet::new(), Vec::new()));
+    let (affected_paths, deleted_paths) = system::get_parent_pid()
+        .ok()
+        .and_then(|ppid| read_session_paths(ppid).ok())
+        .unwrap_or_else(|| (std::collections::HashSet::new(), Vec::new()));
 
     let diff = compute_diff(
         &current_path,
@@ -650,8 +672,7 @@ mod atty {
             Stream::Stdin => std::io::stdin().as_raw_fd(),
         };
 
-        // SAFETY: isatty is safe to call with any file descriptor
-        unsafe { libc::isatty(fd) == 1 }
+        crate::system::is_tty(fd)
     }
 
     #[derive(Copy, Clone)]
