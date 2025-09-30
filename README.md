@@ -35,21 +35,48 @@ cargo build --release
 
 ### Shell Integration (Recommended)
 
-Add to your shell config (e.g., `~/.bashrc`, `~/.zshrc`, or `~/.config/fish/config.fish`):
+`whi` provides shell integration that gives you commands to manipulate your PATH directly in your current shell session. Without shell integration, `whi --move` and similar commands would only output a new PATH string - they can't modify your actual shell's PATH variable.
 
+To enable shell integration, add this to your shell config:
+
+**Bash** (`~/.bashrc`):
 ```bash
-# bash/zsh
-eval "$(whi init bash)"  # or zsh
+eval "$(whi init bash)"
+```
 
-# fish
+**Zsh** (`~/.zshrc`):
+```bash
+eval "$(whi init zsh)"
+```
+
+**Fish** (`~/.config/fish/config.fish`):
+```fish
 whi init fish | source
 ```
 
-This provides four powerful commands:
-- `whim FROM TO` - Move PATH entry
-- `whis IDX1 IDX2` - Swap PATH entries
-- `whip NAME INDEX` - Prefer executable at INDEX (make it win)
-- `whia NAME` - Show all matches with indices (shortcut for `whi -ia`)
+The `whi init <shell>` command outputs shell-specific functions that you can evaluate/source. This provides four powerful commands:
+
+- **`whim FROM TO`** - Move PATH entry from index FROM to index TO
+  ```bash
+  $ whim 10 1      # Move entry at index 10 to position 1
+  ```
+
+- **`whis IDX1 IDX2`** - Swap two PATH entries
+  ```bash
+  $ whis 10 41     # Swap entries at indices 10 and 41
+  ```
+
+- **`whip NAME INDEX`** - Make executable at INDEX win (prefer it over others)
+  ```bash
+  $ whip cargo 50  # Make cargo at index 50 the winner
+  ```
+
+- **`whia NAME`** - Show all matches with indices (shortcut for `whi -ia`)
+  ```bash
+  $ whia cargo     # Equivalent to: whi -ia cargo
+  ```
+
+These commands actually modify your current shell's PATH environment variable, so changes take effect immediately without restarting your shell or sourcing config files
 
 ### Basic Usage
 
@@ -119,34 +146,66 @@ Override PATH:
 $ whi --path="/usr/local/bin:/usr/bin" python
 ```
 
-## Options
+## Command-Line Options
 
 ### Flags
 
 Short flags can be combined Unix-style (e.g., `-ai` = `-a -i`, `-ais` = `-a -i -s`).
 
-- `-a, --all` - Show all PATH matches (default: only winner)
-- `-f, --full` - Show full PATH directory listing
-- `-i, --index` - Show PATH index next to each entry
-- `-l, -L, --follow-symlinks` - Resolve and show canonical targets
-- `-o, --one` - Only print the first match per name
-- `-s, --stat` - Include inode/device/mtime/size metadata
-- `-0, --print0` - NUL-separated output for use with xargs
-- `-q, --quiet` - Suppress non-fatal stderr warnings
-- `--silent` - Print nothing to stderr, use exit codes only
-- `--show-nonexec` - Also list files that exist but aren't executable
-- `-h, --help` - Print help information
+- **`-a, --all`** - Show all PATH matches (default: only winner)
+- **`-f, --full`** - Show full PATH directory listing
+- **`-i, --index`** - Show PATH index next to each entry
+- **`-l, -L, --follow-symlinks`** - Resolve and show canonical targets
+- **`-o, --one`** - Only print the first match per name
+- **`-s, --stat`** - Include inode/device/mtime/size metadata
+- **`-0, --print0`** - NUL-separated output for use with xargs
+- **`-q, --quiet`** - Suppress non-fatal stderr warnings
+- **`--silent`** - Print nothing to stderr, use exit codes only
+- **`--show-nonexec`** - Also list files that exist but aren't executable
+- **`-h, --help`** - Print help information
 
 ### PATH Manipulation
 
-- `--move <FROM> <TO>` - Move PATH entry from index FROM to index TO
-- `--swap <IDX1> <IDX2>` - Swap PATH entries at indices IDX1 and IDX2
-- `--prefer <NAME> <INDEX>` - Make executable NAME at INDEX win
+These commands output a modified PATH string to stdout. Use shell integration (see above) to actually modify your current shell's PATH.
 
-### Options
+- **`--move <FROM> <TO>`** - Move PATH entry from index FROM to index TO
+  ```bash
+  $ whi --move 10 1
+  /path/at/10:/path/at/1:/path/at/2:...
+  ```
 
-- `--path <PATH>` - Override environment PATH string
-- `--color <WHEN>` - Colorize output: auto, never, always [default: auto]
+- **`--swap <IDX1> <IDX2>`** - Swap PATH entries at indices IDX1 and IDX2
+  ```bash
+  $ whi --swap 10 41
+  /modified/path/string/...
+  ```
+
+- **`--prefer <NAME> <INDEX>`** - Make executable NAME at INDEX win
+  ```bash
+  $ whi --prefer cargo 50
+  /modified/path/string/...
+  ```
+
+### Other Options
+
+- **`--path <PATH>`** - Override environment PATH string
+  ```bash
+  $ whi --path="/usr/local/bin:/usr/bin" python
+  ```
+
+- **`--color <WHEN>`** - Colorize output: `auto`, `never`, `always` [default: auto]
+  ```bash
+  $ whi --color=always cargo
+  ```
+
+### Shell Integration Command
+
+- **`whi init <SHELL>`** - Output shell integration code for bash, zsh, or fish
+  ```bash
+  $ whi init bash    # Output bash functions
+  $ whi init zsh     # Output zsh functions
+  $ whi init fish    # Output fish functions
+  ```
 
 ## Exit Codes
 
@@ -179,6 +238,16 @@ Find all versions with metadata:
 
 ```bash
 $ whi -ais gcc
+```
+
+Show full PATH listing with indices:
+
+```bash
+$ whi -f
+[1] /usr/local/bin
+[2] /usr/bin
+[3] /bin
+...
 ```
 
 ## Comparison with `which`
