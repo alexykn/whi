@@ -1,5 +1,6 @@
 use crate::executor::SearchResult;
 use std::io::Write;
+use std::time::SystemTime;
 
 pub struct OutputFormatter {
     use_color: bool,
@@ -55,10 +56,67 @@ impl OutputFormatter {
                 meta.ino, meta.dev, meta.size
             )?;
             if let Some(mtime) = meta.mtime {
-                writeln!(out, "  modified: {mtime:?}")?;
+                writeln!(out, "  modified: {}", Self::format_time(mtime))?;
             }
         }
 
         Ok(())
+    }
+
+    fn format_time(time: SystemTime) -> String {
+        use std::time::UNIX_EPOCH;
+
+        let duration = time.duration_since(UNIX_EPOCH).unwrap_or_default();
+        let secs = duration.as_secs();
+
+        // Convert to US date/time format: MM/DD/YYYY HH:MM:SS AM/PM
+        let days_since_epoch = secs / 86400;
+        let seconds_today = secs % 86400;
+
+        // Calculate date (simplified epoch calculation)
+        // Days since Unix epoch (Jan 1, 1970)
+        let mut year = 1970;
+        let mut days_left = days_since_epoch;
+
+        // Adjust for years
+        loop {
+            let days_in_year = if Self::is_leap_year(year) { 366 } else { 365 };
+            if days_left < days_in_year {
+                break;
+            }
+            days_left -= days_in_year;
+            year += 1;
+        }
+
+        // Find month and day
+        let days_in_months = if Self::is_leap_year(year) {
+            [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+        } else {
+            [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+        };
+
+        let mut month = 1;
+        let mut day = days_left + 1;
+        for &days_in_month in &days_in_months {
+            if day <= days_in_month as u64 {
+                break;
+            }
+            day -= days_in_month as u64;
+            month += 1;
+        }
+
+        // Calculate time
+        let hour = (seconds_today / 3600) as u32;
+        let minute = ((seconds_today % 3600) / 60) as u32;
+        let second = (seconds_today % 60) as u32;
+
+        format!(
+            "{}-{:02}-{:02} {:02}:{:02}:{:02}",
+            year, month, day, hour, minute, second
+        )
+    }
+
+    fn is_leap_year(year: u64) -> bool {
+        (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
     }
 }
