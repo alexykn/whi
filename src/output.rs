@@ -19,10 +19,11 @@ impl OutputFormatter {
         is_winner: bool,
         follow_symlinks: bool,
         show_index: bool,
+        _index_width: usize,
     ) -> std::io::Result<()> {
         // Show index if requested
         if show_index {
-            write!(out, "[{}] ", result.path_index)?;
+            write!(out, "{:>4} ", format!("[{}]", result.path_index))?;
         }
 
         let path_str = result.path.display().to_string();

@@ -104,9 +104,17 @@ fn run(args: &Args) -> i32 {
 
     // If no names provided, show all PATH entries
     if names.is_empty() {
+        let num_dirs = searcher.dirs().len();
+        if num_dirs > 999 {
+            if !args.silent {
+                eprintln!("Error: PATH has {num_dirs} entries (max 999 supported)");
+            }
+            return 3;
+        }
+
         for (idx, dir) in searcher.dirs().iter().enumerate() {
             if args.index {
-                writeln!(out, "[{}] {}", idx + 1, dir.display()).ok();
+                writeln!(out, "{:>4} {}", format!("[{}]", idx + 1), dir.display()).ok();
             } else {
                 writeln!(out, "{}", dir.display()).ok();
             }
@@ -134,6 +142,15 @@ fn run(args: &Args) -> i32 {
             continue;
         }
 
+        // Check max index
+        let max_index = results.iter().map(|r| r.path_index).max().unwrap_or(0);
+        if max_index > 999 {
+            if !args.silent {
+                eprintln!("Error: PATH index {max_index} exceeds max 999");
+            }
+            return 3;
+        }
+
         // Output results
         for (i, result) in results.iter().enumerate() {
             let is_winner = i == 0;
@@ -145,6 +162,7 @@ fn run(args: &Args) -> i32 {
                     is_winner,
                     args.follow_symlinks,
                     args.index,
+                    3, // Always use 3-digit width
                 )
                 .ok();
 
@@ -168,7 +186,7 @@ fn run(args: &Args) -> i32 {
                 let has_match = match_indices.contains(&path_index);
 
                 if args.index {
-                    write!(out, "[{path_index}] ").ok();
+                    write!(out, "{:>4} ", format!("[{}]", path_index)).ok();
                 }
 
                 if use_color && has_match {
