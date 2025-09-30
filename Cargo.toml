@@ -1,0 +1,13 @@
+[package]
+name = "whicha"
+version = "0.1.0"
+edition = "2021"
+authors = ["Alexander Knott <alexander.knott@posteo.de>"]
+description = "List all PATH hits for a command and explain why one wins"
+repository = "https://github.com/alexykn/whicha"
+readme = "README.md"
+keywords = ["cli", "path", "which", "executable", "unix"]
+categories = ["command-line-utilities"]
+rust-version = "1.90"
+
+[dependencies]
