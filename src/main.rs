@@ -8,6 +8,7 @@ mod cli;
 mod executor;
 mod output;
 mod path;
+mod shell_integration;
 
 use cli::{Args, ColorWhen};
 use executor::{ExecutableCheck, SearchResult};
@@ -36,6 +37,20 @@ fn main() {
 }
 
 fn run(args: &Args) -> i32 {
+    // Handle init subcommand
+    if let Some(ref shell) = args.init_shell {
+        match shell_integration::generate_init_script(shell) {
+            Ok(script) => {
+                print!("{script}");
+                return 0;
+            }
+            Err(e) => {
+                eprintln!("Error: {e}");
+                return 2;
+            }
+        }
+    }
+
     let path_var = match &args.path_override {
         Some(p) => p.clone(),
         None => env::var("PATH").unwrap_or_default(),
@@ -44,6 +59,40 @@ fn run(args: &Args) -> i32 {
     let searcher = PathSearcher::new(&path_var);
     let stdout = io::stdout();
     let mut out = BufWriter::new(stdout.lock());
+
+    // Handle --move operation
+    if let Some((from, to)) = args.move_indices {
+        match searcher.move_entry(from, to) {
+            Ok(new_path) => {
+                writeln!(out, "{new_path}").ok();
+                out.flush().ok();
+                return 0;
+            }
+            Err(e) => {
+                if !args.silent {
+                    eprintln!("Error: {e}");
+                }
+                return 2;
+            }
+        }
+    }
+
+    // Handle --swap operation
+    if let Some((idx1, idx2)) = args.swap_indices {
+        match searcher.swap_entries(idx1, idx2) {
+            Ok(new_path) => {
+                writeln!(out, "{new_path}").ok();
+                out.flush().ok();
+                return 0;
+            }
+            Err(e) => {
+                if !args.silent {
+                    eprintln!("Error: {e}");
+                }
+                return 2;
+            }
+        }
+    }
 
     let names = get_names(args);
 
@@ -212,6 +261,7 @@ mod atty {
         unsafe { libc::isatty(fd) == 1 }
     }
 
+    #[derive(Copy, Clone)]
     pub enum Stream {
         Stdout,
         Stdin,

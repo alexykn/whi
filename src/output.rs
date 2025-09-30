@@ -101,10 +101,12 @@ impl OutputFormatter {
         let mut month = 1;
         let mut day = days_left + 1;
         for &days_in_month in &days_in_months {
-            if day <= days_in_month as u64 {
+            #[allow(clippy::cast_sign_loss)]
+            let days_in_month_u64 = days_in_month as u64;
+            if day <= days_in_month_u64 {
                 break;
             }
-            day -= days_in_month as u64;
+            day -= days_in_month_u64;
             month += 1;
         }
 
@@ -113,10 +115,7 @@ impl OutputFormatter {
         let minute = ((seconds_today % 3600) / 60) as u32;
         let second = (seconds_today % 60) as u32;
 
-        format!(
-            "{}-{:02}-{:02} {:02}:{:02}:{:02}",
-            year, month, day, hour, minute, second
-        )
+        format!("{year}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02}")
     }
 
     fn is_leap_year(year: u64) -> bool {

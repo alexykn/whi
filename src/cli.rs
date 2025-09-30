@@ -22,6 +22,9 @@ pub struct Args {
     pub color: ColorWhen,
     pub stat: bool,
     pub index: bool,
+    pub move_indices: Option<(usize, usize)>,
+    pub swap_indices: Option<(usize, usize)>,
+    pub init_shell: Option<String>,
 }
 
 impl Args {
@@ -39,13 +42,30 @@ impl Args {
             color: ColorWhen::Auto,
             stat: false,
             index: false,
+            move_indices: None,
+            swap_indices: None,
+            init_shell: None,
         };
 
-        let args_iter = env::args().skip(1);
+        let args_vec: Vec<String> = env::args().skip(1).collect();
+
+        // Handle 'init' subcommand early
+        if let Some(idx) = args_vec.iter().position(|a| a == "init") {
+            if idx + 1 >= args_vec.len() {
+                return Err("init requires a shell argument (bash, zsh, fish)".to_string());
+            }
+            args.init_shell = Some(args_vec[idx + 1].clone());
+            return Ok(args);
+        }
+
         let mut expect_path = false;
         let mut expect_color = false;
+        let mut expect_move_from = false;
+        let mut expect_swap_from = false;
+        let mut move_from: Option<usize> = None;
+        let mut swap_from: Option<usize> = None;
 
-        for arg in args_iter {
+        for arg in args_vec {
             if expect_path {
                 args.path_override = Some(arg);
                 expect_path = false;
@@ -58,7 +78,50 @@ impl Args {
                 continue;
             }
 
-            Self::process_arg(&mut args, &arg, &mut expect_path, &mut expect_color)?;
+            if expect_move_from {
+                let from = arg
+                    .parse::<usize>()
+                    .map_err(|_| format!("Invalid move source index: {arg}"))?;
+                move_from = Some(from);
+                expect_move_from = false;
+                continue;
+            }
+
+            if let Some(from) = move_from {
+                let to = arg
+                    .parse::<usize>()
+                    .map_err(|_| format!("Invalid move destination index: {arg}"))?;
+                args.move_indices = Some((from, to));
+                move_from = None;
+                continue;
+            }
+
+            if expect_swap_from {
+                let idx1 = arg
+                    .parse::<usize>()
+                    .map_err(|_| format!("Invalid swap first index: {arg}"))?;
+                swap_from = Some(idx1);
+                expect_swap_from = false;
+                continue;
+            }
+
+            if let Some(idx1) = swap_from {
+                let idx2 = arg
+                    .parse::<usize>()
+                    .map_err(|_| format!("Invalid swap second index: {arg}"))?;
+                args.swap_indices = Some((idx1, idx2));
+                swap_from = None;
+                continue;
+            }
+
+            Self::process_arg(
+                &mut args,
+                &arg,
+                &mut expect_path,
+                &mut expect_color,
+                &mut expect_move_from,
+                &mut expect_swap_from,
+            )?;
         }
 
         if expect_path {
@@ -66,6 +129,12 @@ impl Args {
         }
         if expect_color {
             return Err("--color requires a value".to_string());
+        }
+        if expect_move_from || move_from.is_some() {
+            return Err("--move requires two indices: FROM TO".to_string());
+        }
+        if expect_swap_from || swap_from.is_some() {
+            return Err("--swap requires two indices: IDX1 IDX2".to_string());
         }
 
         Ok(args)
@@ -85,11 +154,15 @@ impl Args {
         arg: &str,
         expect_path: &mut bool,
         expect_color: &mut bool,
+        expect_move_from: &mut bool,
+        expect_swap_from: &mut bool,
     ) -> Result<(), String> {
         match arg {
             "-f" | "--full" => args.full = true,
             "-i" | "--index" => args.index = true,
             "-l" | "-L" | "--follow-symlinks" => args.follow_symlinks = true,
+            "--move" => *expect_move_from = true,
+            "--swap" => *expect_swap_from = true,
             "-o" | "--one" => args.one = true,
             "-0" | "--print0" => args.print0 = true,
             "-q" | "--quiet" => args.quiet = true,
@@ -148,7 +221,10 @@ fn print_help() {
 
 USAGE:
     whicha [FLAGS] [OPTIONS] <NAME>...
-    whicha [FLAGS] [OPTIONS]          # names from stdin
+    whicha [FLAGS] [OPTIONS]            # names from stdin
+    whicha --move <FROM> <TO>           # reorder PATH
+    whicha --swap <IDX1> <IDX2>         # swap PATH entries
+    whicha init <SHELL>                 # output shell integration
 
 FLAGS:
     -f, --full             Show full PATH directory listing
@@ -163,9 +239,27 @@ FLAGS:
         --show-nonexec     Also list files that exist but aren't executable
     -h, --help             Print help information
 
+PATH MANIPULATION:
+        --move <FROM> <TO> Move PATH entry from index FROM to index TO
+        --swap <IDX1> <IDX2>
+                           Swap PATH entries at indices IDX1 and IDX2
+
 OPTIONS:
         --path <PATH>      Override environment PATH string
         --color <WHEN>     Colorize output: auto, never, always [default: auto]
+
+SHELL INTEGRATION:
+    whicha init bash       Output bash integration code
+    whicha init zsh        Output zsh integration code
+    whicha init fish       Output fish integration code
+
+    Add to your shell config:
+        bash/zsh: eval \"$(whicha init bash)\" or eval \"$(whicha init zsh)\"
+        fish:     whicha init fish | source
+
+    Provides shell commands to manipulate PATH in current shell:
+        whichm 10 1   # Move PATH entry 10 to position 1
+        whichs 10 41  # Swap PATH entries 10 and 41
 
 EXIT CODES:
     0  All names found
