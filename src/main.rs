@@ -5,9 +5,13 @@ use std::path::{Path, PathBuf};
 use std::process;
 
 mod cli;
+mod config_manager;
 mod executor;
 mod output;
 mod path;
+mod path_diff;
+mod session_tracker;
+mod shell_detect;
 mod shell_integration;
 
 use cli::{Args, ColorWhen};
@@ -52,6 +56,16 @@ fn run(args: &Args) -> i32 {
         }
     }
 
+    // Handle save subcommand
+    if let Some(shell_opt) = &args.save_shell {
+        return handle_save(shell_opt);
+    }
+
+    // Handle diff subcommand
+    if let Some(shell_opt) = &args.diff_shell {
+        return handle_diff(shell_opt, args.diff_full);
+    }
+
     let path_var = match &args.path_override {
         Some(p) => p.clone(),
         None => env::var("PATH").unwrap_or_default(),
@@ -61,10 +75,111 @@ fn run(args: &Args) -> i32 {
     let stdout = io::stdout();
     let mut out = BufWriter::new(stdout.lock());
 
+    // Handle --clean operation
+    if args.clean {
+        let (new_path, removed_indices) = searcher.clean_duplicates();
+
+        // Log deleted duplicates to session file
+        if !removed_indices.is_empty() {
+            // Get the actual paths that were removed
+            let dirs = searcher.dirs();
+            let removed_paths: Vec<String> = removed_indices
+                .iter()
+                .filter_map(|&idx| {
+                    if idx > 0 && idx <= dirs.len() {
+                        Some(dirs[idx - 1].display().to_string())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            if !removed_paths.is_empty() {
+                let ppid = unsafe { libc::getppid() as u32 };
+                if let Err(e) = session_tracker::write_operation(ppid, "deleted", &removed_paths) {
+                    if !args.quiet && !args.silent {
+                        eprintln!("Warning: Failed to log operation: {e}");
+                    }
+                }
+            }
+        }
+
+        writeln!(out, "{new_path}").ok();
+        out.flush().ok();
+        return 0;
+    }
+
+    // Handle --delete operation
+    if !args.delete_indices.is_empty() {
+        // Get the paths to be deleted before deletion
+        let dirs = searcher.dirs();
+        let deleted_paths: Vec<String> = args
+            .delete_indices
+            .iter()
+            .filter_map(|&idx| {
+                if idx > 0 && idx <= dirs.len() {
+                    Some(dirs[idx - 1].display().to_string())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let result = if args.delete_indices.len() == 1 {
+            searcher.delete_entry(args.delete_indices[0])
+        } else {
+            searcher.delete_entries(&args.delete_indices)
+        };
+
+        match result {
+            Ok(new_path) => {
+                // Log deleted paths to session file
+                if !deleted_paths.is_empty() {
+                    let ppid = unsafe { libc::getppid() as u32 };
+                    if let Err(e) =
+                        session_tracker::write_operation(ppid, "deleted", &deleted_paths)
+                    {
+                        if !args.quiet && !args.silent {
+                            eprintln!("Warning: Failed to log operation: {e}");
+                        }
+                    }
+                }
+
+                writeln!(out, "{new_path}").ok();
+                out.flush().ok();
+                return 0;
+            }
+            Err(e) => {
+                if !args.silent {
+                    eprintln!("Error: {e}");
+                }
+                return 2;
+            }
+        }
+    }
+
     // Handle --move operation
     if let Some((from, to)) = args.move_indices {
+        // Get the path being moved
+        let dirs = searcher.dirs();
+        let moved_path = if from > 0 && from <= dirs.len() {
+            Some(dirs[from - 1].display().to_string())
+        } else {
+            None
+        };
+
         match searcher.move_entry(from, to) {
             Ok(new_path) => {
+                // Log moved path to session file
+                if let Some(path) = moved_path {
+                    let ppid = unsafe { libc::getppid() as u32 };
+                    if let Err(e) = session_tracker::write_operation(ppid, "moved", &[path]) {
+                        if !args.quiet && !args.silent {
+                            eprintln!("Warning: Failed to log operation: {e}");
+                        }
+                    }
+                }
+
                 writeln!(out, "{new_path}").ok();
                 out.flush().ok();
                 return 0;
@@ -80,8 +195,31 @@ fn run(args: &Args) -> i32 {
 
     // Handle --swap operation
     if let Some((idx1, idx2)) = args.swap_indices {
+        // Get the paths being swapped
+        let dirs = searcher.dirs();
+        let mut swapped_paths = Vec::new();
+
+        if idx1 > 0 && idx1 <= dirs.len() {
+            swapped_paths.push(dirs[idx1 - 1].display().to_string());
+        }
+        if idx2 > 0 && idx2 <= dirs.len() {
+            swapped_paths.push(dirs[idx2 - 1].display().to_string());
+        }
+
         match searcher.swap_entries(idx1, idx2) {
             Ok(new_path) => {
+                // Log swapped paths to session file
+                if !swapped_paths.is_empty() {
+                    let ppid = unsafe { libc::getppid() as u32 };
+                    if let Err(e) =
+                        session_tracker::write_operation(ppid, "swapped", &swapped_paths)
+                    {
+                        if !args.quiet && !args.silent {
+                            eprintln!("Warning: Failed to log operation: {e}");
+                        }
+                    }
+                }
+
                 writeln!(out, "{new_path}").ok();
                 out.flush().ok();
                 return 0;
@@ -332,9 +470,27 @@ fn handle_prefer<W: Write>(
         return 2;
     };
 
+    // Get the path being moved (before the move)
+    let dirs = searcher.dirs();
+    let preferred_path = if target_idx > 0 && target_idx <= dirs.len() {
+        Some(dirs[target_idx - 1].display().to_string())
+    } else {
+        None
+    };
+
     // Perform the move
     match searcher.move_entry(target_idx, new_position) {
         Ok(new_path) => {
+            // Log preferred path to session file
+            if let Some(path) = preferred_path {
+                let ppid = unsafe { libc::getppid() as u32 };
+                if let Err(e) = session_tracker::write_operation(ppid, "preferred", &[path]) {
+                    if !args.quiet && !args.silent {
+                        eprintln!("Warning: Failed to log operation: {e}");
+                    }
+                }
+            }
+
             writeln!(out, "{new_path}").ok();
             out.flush().ok();
             0
@@ -346,6 +502,142 @@ fn handle_prefer<W: Write>(
             2
         }
     }
+}
+
+fn handle_save(shell_opt: &Option<String>) -> i32 {
+    use config_manager::save_path;
+    use session_tracker::{cleanup_old_sessions, clear_session};
+    use shell_detect::{detect_current_shell, Shell};
+
+    let path_var = env::var("PATH").unwrap_or_default();
+
+    let result = match shell_opt {
+        None => {
+            // Auto-detect current shell
+            let shell = match detect_current_shell() {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    return 2;
+                }
+            };
+
+            if let Err(e) = save_path(&shell, &path_var) {
+                eprintln!("Error: {e}");
+                return 2;
+            }
+
+            let num_entries = path_var.split(':').filter(|s| !s.is_empty()).count();
+            println!("Saved PATH to {} ({} entries)", shell.as_str(), num_entries);
+            0
+        }
+        Some(shell_str) => {
+            if shell_str.to_lowercase() == "all" {
+                // Save to all three shells
+                let shells = [Shell::Bash, Shell::Zsh, Shell::Fish];
+                let mut all_ok = true;
+
+                for shell in &shells {
+                    if let Err(e) = save_path(shell, &path_var) {
+                        eprintln!("Error saving to {}: {e}", shell.as_str());
+                        all_ok = false;
+                    } else {
+                        let num_entries = path_var.split(':').filter(|s| !s.is_empty()).count();
+                        println!("Saved PATH to {} ({} entries)", shell.as_str(), num_entries);
+                    }
+                }
+
+                if all_ok {
+                    0
+                } else {
+                    2
+                }
+            } else {
+                // Save to specific shell
+                let shell = match Shell::from_str(shell_str) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("Error: {e}");
+                        return 2;
+                    }
+                };
+
+                if let Err(e) = save_path(&shell, &path_var) {
+                    eprintln!("Error: {e}");
+                    return 2;
+                }
+
+                let num_entries = path_var.split(':').filter(|s| !s.is_empty()).count();
+                println!("Saved PATH to {} ({} entries)", shell.as_str(), num_entries);
+                0
+            }
+        }
+    };
+
+    // After successful save, clear session log and cleanup old sessions
+    if result == 0 {
+        let ppid = unsafe { libc::getppid() as u32 };
+        let _ = clear_session(ppid); // Ignore errors
+        let _ = cleanup_old_sessions(); // Ignore errors
+    }
+
+    result
+}
+
+fn handle_diff(shell_opt: &Option<String>, full: bool) -> i32 {
+    use config_manager::load_saved_path;
+    use path_diff::{compute_diff, format_diff};
+    use session_tracker::read_session_paths;
+    use shell_detect::{detect_current_shell, Shell};
+
+    let current_path = env::var("PATH").unwrap_or_default();
+    let use_color = atty::is(atty::Stream::Stdout);
+
+    let shell = match shell_opt {
+        None => {
+            // Auto-detect current shell
+            match detect_current_shell() {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    return 2;
+                }
+            }
+        }
+        Some(shell_str) => match Shell::from_str(shell_str) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Error: {e}");
+                return 2;
+            }
+        },
+    };
+
+    let saved_path = match load_saved_path(&shell) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
+        }
+    };
+
+    // Get PPID (parent shell PID) to read affected and deleted paths
+    let ppid = unsafe { libc::getppid() as u32 };
+    let (affected_paths, deleted_paths) =
+        read_session_paths(ppid).unwrap_or_else(|_| (std::collections::HashSet::new(), Vec::new()));
+
+    let diff = compute_diff(
+        &current_path,
+        &saved_path,
+        &affected_paths,
+        &deleted_paths,
+        full,
+    );
+    let formatted = format_diff(&diff, use_color);
+
+    println!("{formatted}");
+
+    0
 }
 
 // TTY detection using isatty(3)

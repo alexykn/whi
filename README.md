@@ -4,10 +4,37 @@
 
 `whi` is a powerful `which` replacement with PATH manipulation. Find executables, see all matches, and reorder your PATH with simple shell commands.
 
+## Key Feature: Session-Based with Optional Persistence
+
+**By default, `whi` only modifies your current shell session.** Changes are temporary and safe to experiment with. When you're happy with your PATH, use `whi diff` to review changes and `whi save` to persist them.
+
+```bash
+# 1. Manipulate PATH in current session (temporary)
+$ whid 5 16 7    # Delete entries at indices 5, 16, and 7
+$ whic           # Clean duplicate entries
+$ whim 10 1      # Move entry at index 10 to position 1
+
+# 2. Review changes before saving
+$ whi diff
++ /usr/local/bin/new-tool
+- /old/removed/path
+↕ /Users/user/.rustup/toolchains/stable-aarch64-apple-darwin/bin
+
+# 3. Persist changes across new terminal sessions
+$ whi save
+Saved PATH to zsh (68 entries)
+
+# Open new terminal → your changes are still there!
+```
+
+**This workflow prevents accidental PATH corruption** and lets you experiment freely.
+
 ## Features
 
+- **Session-based by default**: Changes only affect current shell, safe to experiment
+- **Persistence when you want it**: Use `whi diff` to review, `whi save` to persist
 - **Better than which**: Shows winner by default, all matches with `-a`
-- **PATH manipulation**: Move, swap, and prefer executables with shell integration
+- **PATH manipulation**: Move, swap, delete, and clean duplicates with simple commands
 - **Winner indication**: Clearly marks which executable would actually run with color
 - **PATH indices** (`-i`): Shows the PATH index for each match
 - **Full PATH listing** (`-f`): Displays complete PATH with indices
@@ -56,7 +83,7 @@ eval "$(whi init zsh)"
 whi init fish | source
 ```
 
-The `whi init <shell>` command outputs shell-specific functions that you can evaluate/source. This provides five powerful commands:
+The `whi init <shell>` command outputs shell-specific functions that you can evaluate/source. This provides seven powerful commands:
 
 - **`whim FROM TO`** - Move PATH entry from index FROM to index TO
   ```bash
@@ -73,6 +100,17 @@ The `whi init <shell>` command outputs shell-specific functions that you can eva
   $ whip cargo 50  # Make cargo at index 50 the winner
   ```
 
+- **`whic`** - Clean duplicate PATH entries (keeps first occurrence)
+  ```bash
+  $ whic           # Remove all duplicate entries
+  ```
+
+- **`whid INDEX...`** - Delete PATH entries at one or more indices
+  ```bash
+  $ whid 5         # Delete entry at index 5
+  $ whid 5 16 7    # Delete entries at indices 5, 16, and 7
+  ```
+
 - **`whia NAME`** - Show all matches with indices (shortcut for `whi -ia`)
   ```bash
   $ whia cargo     # Equivalent to: whi -ia cargo
@@ -84,7 +122,7 @@ The `whi init <shell>` command outputs shell-specific functions that you can eva
   $ whii cargo     # Show cargo matches with indices
   ```
 
-These commands actually modify your current shell's PATH environment variable, so changes take effect immediately without restarting your shell or sourcing config files
+**Important:** These commands only modify your **current shell session**. Changes are temporary until you use `whi save` to persist them.
 
 ### Basic Usage
 
@@ -197,6 +235,106 @@ Swap two PATH entries:
 $ whis 10 41     # Swap entries at indices 10 and 41
 ```
 
+Clean duplicate entries:
+
+```bash
+$ whia cargo
+[4] /Users/user/.cargo/bin/cargo
+[6] /opt/homebrew/bin/cargo
+[54] /Users/user/.cargo/bin/cargo    # Duplicate!
+
+$ whic           # Remove duplicates
+$ whia cargo
+[4] /Users/user/.cargo/bin/cargo
+[6] /opt/homebrew/bin/cargo
+```
+
+Delete specific entries:
+
+```bash
+$ whid 6 54      # Delete entries at indices 6 and 54
+$ whid 5 16 7    # Delete multiple entries at once
+```
+
+### Making Changes Persistent
+
+**All the commands above only affect your current shell session.** To make changes permanent:
+
+```bash
+# 1. Make changes in your current session
+$ whic                           # Clean duplicates
+$ whid 10 20                     # Delete unwanted entries
+$ whim 5 1                       # Reorder as needed
+
+# 2. Review what changed
+$ whi diff
+- /Users/user/.rye/shims
+- /Users/user/.cargo/bin
+↕ /Users/user/.rustup/toolchains/stable-aarch64-apple-darwin/bin
+
+# 3. Save changes (persists across new terminal sessions)
+$ whi save
+Saved PATH to zsh (65 entries)
+
+# Or save to all shells at once
+$ whi save all
+Saved PATH to bash (65 entries)
+Saved PATH to zsh (65 entries)
+Saved PATH to fish (65 entries)
+```
+
+After running `whi save`, your changes are automatically loaded in new terminal sessions. The saved PATH is stored in `~/.whi/saved_path_<shell>` and loaded by a single line added to your shell config file.
+
+**You can experiment safely** because changes are session-only until you explicitly save them.
+
+### Understanding `whi diff`
+
+The `whi diff` command shows what changed between your current session and the saved PATH. It uses intelligent markers to distinguish different types of changes:
+
+**Basic diff** (`whi diff`) - Shows only explicit changes:
+```bash
+$ whi diff
++ /new/path/added                    # You added this path
+- /old/path/removed                  # Deleted with whid
+- /Users/user/.cargo/bin             # Duplicate removed by whic
+↕ /Users/user/.rustup/.../bin        # You moved this with whim/whis/whip
+```
+
+**Full diff** (`whi diff full`) - Shows everything including implicit shifts:
+```bash
+$ whi diff full
++ /new/path/added                    # Explicitly added
+- /old/path/removed                  # Explicitly deleted
+↕ /Users/user/.rustup/.../bin        # Explicitly moved by you
+M /opt/homebrew/bin                  # Implicitly shifted (side effect)
+M /usr/local/bin                     # Implicitly shifted (side effect)
+U /usr/bin                           # Unchanged position
+U /bin                               # Unchanged position
+```
+
+**Diff markers explained:**
+- **`+`** (green) - New path added to your PATH
+- **`-`** (red) - Path removed (via `whid` or duplicate removed by `whic`)
+- **`↕`** (cyan) - Path explicitly moved by you using `whim`, `whis`, or `whip`
+- **`M`** - Path implicitly moved (shifted as a side effect of your operations) - *full mode only*
+- **`U`** - Path unchanged (same position as saved) - *full mode only*
+
+**Session tracking:** `whi` tracks all operations in your current shell session (`whim`, `whis`, `whip`, `whic`, `whid`) to accurately distinguish between changes you explicitly made versus paths that shifted as a side effect. This makes `whi diff` highly accurate in showing what you actually changed.
+
+**Use cases:**
+```bash
+# Quick check - see only what you explicitly changed
+$ whi diff
+
+# Detailed review - see everything including ripple effects
+$ whi diff full
+
+# Compare with saved PATH from a specific shell
+$ whi diff bash
+$ whi diff zsh
+$ whi diff fish
+```
+
 ### Other Usage Examples
 
 Read multiple names from stdin:
@@ -261,9 +399,9 @@ Short flags can be combined Unix-style (e.g., `-ai` = `-a -i`, `-ais` = `-a -i -
 - **`--show-nonexec`** - Also list files that exist but aren't executable
 - **`-h, --help`** - Print help information
 
-### PATH Manipulation
+### PATH Manipulation (Session Only)
 
-These commands output a modified PATH string to stdout. Use shell integration (see above) to actually modify your current shell's PATH.
+These commands output a modified PATH string to stdout. Use shell integration (see above) to actually modify your current shell's PATH. **Changes are temporary** until you use `whi save`.
 
 - **`--move <FROM> <TO>`** - Move PATH entry from index FROM to index TO
   ```bash
@@ -282,6 +420,46 @@ These commands output a modified PATH string to stdout. Use shell integration (s
   $ whi --prefer cargo 50
   /modified/path/string/...
   ```
+
+- **`--clean` / `-c`** - Remove duplicate PATH entries (keeps first occurrence)
+  ```bash
+  $ whi --clean
+  /deduplicated/path/...
+  ```
+
+- **`--delete <INDEX>...` / `-d`** - Delete one or more PATH entries by index
+  ```bash
+  $ whi --delete 5 16 7
+  /path/without/those/entries...
+  ```
+
+### Persistence
+
+- **`whi save [SHELL]`** - Save current PATH persistently
+  ```bash
+  $ whi save           # Auto-detect current shell
+  $ whi save bash      # Save for bash
+  $ whi save zsh       # Save for zsh
+  $ whi save fish      # Save for fish
+  $ whi save all       # Save for all shells
+  ```
+
+- **`whi diff [SHELL|full]`** - Show differences between current and saved PATH
+  ```bash
+  $ whi diff           # Compare with saved PATH for current shell (explicit changes only)
+  $ whi diff full      # Show everything including implicit shifts (M) and unchanged (U)
+  $ whi diff zsh       # Compare with saved PATH for zsh
+  $ whi diff fish      # Compare with saved PATH for fish
+  ```
+
+  **Diff markers:**
+  - `+` (green) - Added paths
+  - `-` (red) - Removed paths (including duplicates from `whic`)
+  - `↕` (cyan) - Explicitly moved paths (`whim`/`whis`/`whip`)
+  - `M` - Implicitly shifted paths (*full mode only*)
+  - `U` - Unchanged paths (*full mode only*)
+
+After `whi save`, changes persist across new terminal sessions. Use `whi diff` to review changes before saving.
 
 ### Other Options
 
@@ -358,6 +536,11 @@ $ whi -i       # Or use whii shortcut
 | Follow symlinks | Some versions | ✓ With `-l/-L` |
 | File metadata | ✗ | ✓ With `-s` |
 | PATH manipulation | ✗ | ✓ With shell integration |
+| Clean duplicates | ✗ | ✓ With `whic` |
+| Delete entries | ✗ | ✓ With `whid` |
+| Session-based changes | ✗ | ✓ Safe to experiment |
+| Persistent changes | ✗ | ✓ With `whi save` |
+| Intelligent diff | ✗ | ✓ With `whi diff` (tracks explicit vs implicit changes) |
 | Combinable flags | ✗ | ✓ |
 | Multiple names | ✓ | ✓ |
 | Stdin input | ✗ | ✓ |
@@ -370,8 +553,13 @@ Ever wonder:
 - How to make a different version win without editing shell configs?
 - What other versions exist on your PATH?
 - What's the actual order of your PATH directories?
+- How to safely experiment with PATH changes without breaking things?
 
-`whi` answers all these questions and lets you manipulate your PATH on the fly with simple shell commands.
+`whi` answers all these questions and lets you:
+- **Experiment safely** with session-only changes
+- **Review before committing** with `whi diff`
+- **Persist when ready** with `whi save`
+- **Manipulate PATH on the fly** without manually editing config files
 
 ## License
 

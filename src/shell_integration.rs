@@ -61,6 +61,31 @@ whia() {
 whii() {
     whi -i "$@"
 }
+
+whic() {
+    local new_path
+    new_path=$(whi --clean)
+    if [ $? -eq 0 ]; then
+        export PATH="$new_path"
+    else
+        return $?
+    fi
+}
+
+whid() {
+    if [ "$#" -lt 1 ]; then
+        echo "Usage: whid INDEX..." >&2
+        return 2
+    fi
+
+    local new_path
+    new_path=$(whi --delete "$@")
+    if [ $? -eq 0 ]; then
+        export PATH="$new_path"
+    else
+        return $?
+    fi
+}
 "#;
 
 const ZSH_INIT: &str = r#"# whi shell integration for zsh
@@ -117,6 +142,31 @@ whia() {
 whii() {
     whi -i "$@"
 }
+
+whic() {
+    local new_path
+    new_path=$(whi --clean)
+    if [ $? -eq 0 ]; then
+        export PATH="$new_path"
+    else
+        return $?
+    fi
+}
+
+whid() {
+    if [ "$#" -lt 1 ]; then
+        echo "Usage: whid INDEX..." >&2
+        return 2
+    fi
+
+    local new_path
+    new_path=$(whi --delete "$@")
+    if [ $? -eq 0 ]; then
+        export PATH="$new_path"
+    else
+        return $?
+    fi
+}
 "#;
 
 const FISH_INIT: &str = r#"# whi shell integration for fish
@@ -169,5 +219,28 @@ end
 
 function whii
     whi -i $argv
+end
+
+function whic
+    set -l new_path (whi --clean)
+    if test $status -eq 0
+        set -gx PATH (string split : $new_path)
+    else
+        return $status
+    end
+end
+
+function whid
+    if test (count $argv) -lt 1
+        echo "Usage: whid INDEX..." >&2
+        return 2
+    end
+
+    set -l new_path (whi --delete $argv)
+    if test $status -eq 0
+        set -gx PATH (string split : $new_path)
+    else
+        return $status
+    end
 end
 "#;
