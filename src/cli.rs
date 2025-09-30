@@ -17,7 +17,7 @@ pub struct Args {
     pub print0: bool,
     pub quiet: bool,
     pub silent: bool,
-    pub first: bool,
+    pub one: bool,
     pub show_nonexec: bool,
     pub path_override: Option<String>,
     pub color: ColorWhen,
@@ -34,7 +34,7 @@ impl Args {
             print0: false,
             quiet: false,
             silent: false,
-            first: false,
+            one: false,
             show_nonexec: false,
             path_override: None,
             color: ColorWhen::Auto,
@@ -90,12 +90,12 @@ impl Args {
             "-e" | "--explain" => args.explain = true,
             "-f" | "--full" => args.full = true,
             "-L" | "--follow-symlinks" => args.follow_symlinks = true,
+            "-o" | "--one" => args.one = true,
             "-0" | "--print0" => args.print0 = true,
             "-q" | "--quiet" => args.quiet = true,
+            "-s" | "--stat" => args.stat = true,
             "--silent" => args.silent = true,
-            "--first" => args.first = true,
             "--show-nonexec" => args.show_nonexec = true,
-            "--stat" => args.stat = true,
             "--path" => *expect_path = true,
             "--color" => *expect_color = true,
             "-h" | "--help" => {
@@ -127,6 +127,8 @@ impl Args {
                 'e' => args.explain = true,
                 'f' => args.full = true,
                 'L' => args.follow_symlinks = true,
+                'o' => args.one = true,
+                's' => args.stat = true,
                 '0' => args.print0 = true,
                 'q' => args.quiet = true,
                 'h' => {
@@ -152,12 +154,12 @@ FLAGS:
     -e, --explain          Show hits with PATH indices to stderr
     -f, --full             With -e: include full PATH directory listing
     -L, --follow-symlinks  Resolve and show canonical targets
+    -s, --stat             Include inode/device/mtime/size metadata
     -0, --print0           NUL-separated output for xargs
     -q, --quiet            Suppress non-fatal stderr warnings
         --silent           Print nothing to stderr, use exit codes only
-        --first            Only print the first match per name
+    -o, --one              Only print the first match per name
         --show-nonexec     Also list files that exist but aren't executable
-        --stat             Include inode/device/mtime/size in --explain
     -h, --help             Print help information
 
 OPTIONS:

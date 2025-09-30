@@ -92,10 +92,10 @@ $ whicha python node cargo
 /usr/local/bin/cargo
 ```
 
-Show only the winner with `--first`:
+Show only the winner with `--one`:
 
 ```bash
-$ whicha --first python
+$ whicha --one python
 /usr/local/bin/python
 ```
 
@@ -124,17 +124,17 @@ $ whicha --path="/usr/local/bin:/usr/bin" python
 
 ### Flags
 
-Short flags can be combined Unix-style (e.g., `-ef` = `-e -f`, `-eL` = `-e -L`).
+Short flags can be combined Unix-style (e.g., `-ef` = `-e -f`, `-os` = `-o -s`, `-eos` = `-e -o -s`).
 
 - `-e, --explain` - Show hits with PATH indices to stderr
 - `-f, --full` - With `-e`: include full PATH directory listing
 - `-L, --follow-symlinks` - Resolve and show canonical targets
+- `-o, --one` - Only print the first match per name
+- `-s, --stat` - Include inode/device/mtime/size metadata
 - `-0, --print0` - NUL-separated output for use with xargs
 - `-q, --quiet` - Suppress non-fatal stderr warnings
 - `--silent` - Print nothing to stderr, use exit codes only
-- `--first` - Only print the first match per name
 - `--show-nonexec` - Also list files that exist but aren't executable
-- `--stat` - Include inode/device/mtime/size in --explain
 - `-h, --help` - Print help information
 
 ### Options
@@ -166,7 +166,7 @@ $ whicha -e node
 Use with xargs to check executables:
 
 ```bash
-$ whicha -0 --first python node cargo | xargs -0 -n1 file
+$ whicha -0 --one python node cargo | xargs -0 -n1 file
 ```
 
 Find shadowed commands:

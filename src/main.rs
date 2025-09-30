@@ -97,7 +97,7 @@ fn run(args: &Args) -> i32 {
                 )
                 .ok();
 
-            if args.first {
+            if args.one {
                 break;
             }
         }

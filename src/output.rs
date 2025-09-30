@@ -58,6 +58,18 @@ impl OutputFormatter {
             writeln!(out)?;
         }
 
+        // Show metadata if present (works with or without -e)
+        if let Some(ref meta) = result.metadata {
+            writeln!(
+                out,
+                "  inode: {}, device: {}, size: {} bytes",
+                meta.ino, meta.dev, meta.size
+            )?;
+            if let Some(mtime) = meta.mtime {
+                writeln!(out, "  modified: {mtime:?}")?;
+            }
+        }
+
         Ok(())
     }
 }
