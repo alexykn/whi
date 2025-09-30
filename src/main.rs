@@ -94,6 +94,7 @@ fn run(args: &Args) -> i32 {
                     is_winner,
                     args.follow_symlinks,
                     args.explain,
+                    args.index,
                 )
                 .ok();
 

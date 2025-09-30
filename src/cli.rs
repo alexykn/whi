@@ -22,6 +22,7 @@ pub struct Args {
     pub path_override: Option<String>,
     pub color: ColorWhen,
     pub stat: bool,
+    pub index: bool,
 }
 
 impl Args {
@@ -39,6 +40,7 @@ impl Args {
             path_override: None,
             color: ColorWhen::Auto,
             stat: false,
+            index: false,
         };
 
         let args_iter = env::args().skip(1);
@@ -89,6 +91,7 @@ impl Args {
         match arg {
             "-e" | "--explain" => args.explain = true,
             "-f" | "--full" => args.full = true,
+            "-i" | "--index" => args.index = true,
             "-L" | "--follow-symlinks" => args.follow_symlinks = true,
             "-o" | "--one" => args.one = true,
             "-0" | "--print0" => args.print0 = true,
@@ -126,6 +129,7 @@ impl Args {
             match ch {
                 'e' => args.explain = true,
                 'f' => args.full = true,
+                'i' => args.index = true,
                 'L' => args.follow_symlinks = true,
                 'o' => args.one = true,
                 's' => args.stat = true,
@@ -153,6 +157,7 @@ USAGE:
 FLAGS:
     -e, --explain          Show hits with PATH indices to stderr
     -f, --full             With -e: include full PATH directory listing
+    -i, --index            Show PATH index next to each entry
     -L, --follow-symlinks  Resolve and show canonical targets
     -s, --stat             Include inode/device/mtime/size metadata
     -0, --print0           NUL-separated output for xargs
