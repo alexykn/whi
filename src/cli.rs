@@ -259,7 +259,7 @@ USAGE:
 
 FLAGS:
     -a, --all              Show all PATH matches (default: only winner)
-    -f, --full             Show full PATH directory listing
+    -f, --full             Show all matches + full PATH listing (implies -a)
     -i, --index            Show PATH index next to each entry
     -l, -L, --follow-symlinks
                            Resolve and show canonical targets
@@ -297,6 +297,7 @@ SHELL INTEGRATION:
         whis 10 41     # Swap PATH entries 10 and 41
         whip cargo 50  # Make cargo at index 50 the winner
         whia cargo     # Show all cargo matches with indices (whi -ia)
+        whii           # Show all PATH entries with indices (whi -i)
 
 EXIT CODES:
     0  All names found

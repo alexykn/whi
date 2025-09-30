@@ -57,6 +57,10 @@ whip() {
 whia() {
     whi -ia "$@"
 }
+
+whii() {
+    whi -i "$@"
+}
 "#;
 
 const ZSH_INIT: &str = r#"# whi shell integration for zsh
@@ -109,6 +113,10 @@ whip() {
 whia() {
     whi -ia "$@"
 }
+
+whii() {
+    whi -i "$@"
+}
 "#;
 
 const FISH_INIT: &str = r#"# whi shell integration for fish
@@ -157,5 +165,9 @@ end
 
 function whia
     whi -ia $argv
+end
+
+function whii
+    whi -i $argv
 end
 "#;

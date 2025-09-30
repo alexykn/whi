@@ -54,7 +54,7 @@ eval "$(whi init zsh)"
 whi init fish | source
 ```
 
-The `whi init <shell>` command outputs shell-specific functions that you can evaluate/source. This provides four powerful commands:
+The `whi init <shell>` command outputs shell-specific functions that you can evaluate/source. This provides five powerful commands:
 
 - **`whim FROM TO`** - Move PATH entry from index FROM to index TO
   ```bash
@@ -76,9 +76,33 @@ The `whi init <shell>` command outputs shell-specific functions that you can eva
   $ whia cargo     # Equivalent to: whi -ia cargo
   ```
 
+- **`whii [NAME]`** - Show PATH entries or matches with indices (shortcut for `whi -i`)
+  ```bash
+  $ whii           # Show all PATH entries with indices
+  $ whii cargo     # Show cargo matches with indices
+  ```
+
 These commands actually modify your current shell's PATH environment variable, so changes take effect immediately without restarting your shell or sourcing config files
 
 ### Basic Usage
+
+View all PATH entries (with or without indices):
+
+```bash
+$ whi
+/Users/user/.rustup/toolchains/stable-aarch64-apple-darwin/bin
+/opt/homebrew/bin
+/usr/local/bin
+/usr/bin
+...
+
+$ whi -i    # Or use the whii shortcut
+[1] /Users/user/.rustup/toolchains/stable-aarch64-apple-darwin/bin
+[2] /opt/homebrew/bin
+[3] /usr/local/bin
+[4] /usr/bin
+...
+```
 
 Find an executable (like `which`) - shows only the winner:
 
@@ -192,15 +216,21 @@ $ whi python node cargo gcc
 /usr/bin/gcc
 ```
 
-Show full PATH listing:
+Show all PATH entries (with or without indices):
 
 ```bash
-$ whi -f
+$ whi          # Plain listing
+/Users/user/.rustup/toolchains/stable-aarch64-apple-darwin/bin
+/opt/homebrew/bin
+/usr/local/bin
+/usr/bin
+...
+
+$ whi -i       # With indices
 [1] /Users/user/.rustup/toolchains/stable-aarch64-apple-darwin/bin
 [2] /opt/homebrew/bin
 [3] /usr/local/bin
 [4] /usr/bin
-[5] /Users/user/.cargo/bin
 ...
 ```
 
@@ -218,7 +248,7 @@ $ whi --path="/usr/local/bin:/usr/bin" python
 Short flags can be combined Unix-style (e.g., `-ai` = `-a -i`, `-ais` = `-a -i -s`).
 
 - **`-a, --all`** - Show all PATH matches (default: only winner)
-- **`-f, --full`** - Show full PATH directory listing
+- **`-f, --full`** - Show all matches + full PATH listing (implies `-a`; directories with matches highlighted in color)
 - **`-i, --index`** - Show PATH index next to each entry
 - **`-l, -L, --follow-symlinks`** - Resolve and show canonical targets
 - **`-o, --one`** - Only print the first match per name
@@ -305,10 +335,10 @@ Find all versions with metadata:
 $ whi -ais gcc
 ```
 
-Show full PATH listing with indices:
+Show all PATH entries with indices:
 
 ```bash
-$ whi -f
+$ whi -i       # Or use whii shortcut
 [1] /usr/local/bin
 [2] /usr/bin
 [3] /bin

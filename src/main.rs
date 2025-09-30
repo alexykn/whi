@@ -105,7 +105,11 @@ fn run(args: &Args) -> i32 {
     // If no names provided, show all PATH entries
     if names.is_empty() {
         for (idx, dir) in searcher.dirs().iter().enumerate() {
-            writeln!(out, "[{}] {}", idx + 1, dir.display()).ok();
+            if args.index {
+                writeln!(out, "[{}] {}", idx + 1, dir.display()).ok();
+            } else {
+                writeln!(out, "{}", dir.display()).ok();
+            }
         }
         out.flush().ok();
         return 0;
@@ -145,8 +149,8 @@ fn run(args: &Args) -> i32 {
                 .ok();
 
             // By default, only show the winner (like `which`)
-            // Show all with --all flag
-            if !args.all || args.one {
+            // Show all with --all flag or --full flag (full implies all)
+            if (!args.all && !args.full) || args.one {
                 break;
             }
         }
@@ -154,9 +158,22 @@ fn run(args: &Args) -> i32 {
         // If -f/--full, show full PATH listing after results
         if args.full {
             writeln!(out).ok();
+
+            // Collect all path indices that contain matches
+            let match_indices: std::collections::HashSet<usize> =
+                results.iter().map(|r| r.path_index).collect();
+
             for (idx, dir) in searcher.dirs().iter().enumerate() {
+                let path_index = idx + 1;
+                let has_match = match_indices.contains(&path_index);
+
                 if args.index {
-                    writeln!(out, "[{}] {}", idx + 1, dir.display()).ok();
+                    write!(out, "[{path_index}] ").ok();
+                }
+
+                if use_color && has_match {
+                    // Use yellow/dim color for directories containing matches
+                    writeln!(out, "\x1b[33m{}\x1b[0m", dir.display()).ok();
                 } else {
                     writeln!(out, "{}", dir.display()).ok();
                 }
