@@ -1,6 +1,6 @@
 # whi
 
-**Magically simple PATH management**
+**Stupid simple PATH management**
 
 `whi` is a powerful `which` replacement with PATH manipulation. Find executables, see all matches, and reorder your PATH with simple shell commands.
 
