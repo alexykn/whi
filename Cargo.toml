@@ -11,3 +11,4 @@ categories = ["command-line-utilities"]
 rust-version = "1.90"
 
 [dependencies]
+libc = "0.2"

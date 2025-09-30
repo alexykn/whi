@@ -198,13 +198,18 @@ fn should_use_color(args: &Args) -> bool {
     }
 }
 
-// Simple atty implementation using /dev/tty
+// TTY detection using isatty(3)
 mod atty {
-    use std::fs::File;
+    use std::os::unix::io::AsRawFd;
 
-    pub fn is(_stream: Stream) -> bool {
-        // Try to open /dev/tty - if it works, we're probably connected to a terminal
-        File::open("/dev/tty").is_ok()
+    pub fn is(stream: Stream) -> bool {
+        let fd = match stream {
+            Stream::Stdout => std::io::stdout().as_raw_fd(),
+            Stream::Stdin => std::io::stdin().as_raw_fd(),
+        };
+
+        // SAFETY: isatty is safe to call with any file descriptor
+        unsafe { libc::isatty(fd) == 1 }
     }
 
     pub enum Stream {
