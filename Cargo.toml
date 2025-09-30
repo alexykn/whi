@@ -9,6 +9,7 @@ readme = "README.md"
 keywords = ["cli", "path", "which", "executable", "unix"]
 categories = ["command-line-utilities"]
 rust-version = "1.90"
+license = "MIT"
 
 [dependencies]
 libc = "0.2"
