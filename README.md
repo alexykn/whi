@@ -19,6 +19,8 @@
 
 ## Installation
 
+From crates.io:
+
 ```bash
 cargo install whi
 ```
