@@ -30,21 +30,36 @@ The snippet defines helper functions and exports `WHI_SHELL_INITIALIZED=1` so th
 All of these operate on the current shell session. Each command prints the updated `PATH`; the integration captures the string and updates `PATH` for you.
 
 ```bash
+# Which like usage
+whi cargo
+whi -n cargo (no index, same output which gives)
+whi -a cargo (shorthand whia)
+whi -an cargo
+
+# Show full path (line seperated)
+whi -f
+whi -fn
+
 # Prefer a specific executable or add a path
+# Makes the minimal required change to path / puts it at
+# the lowest spot in path that achieves it being the winner
 whi prefer cargo 5
 whi prefer cargo ~/.cargo/bin
 whi prefer cargo github release
-whi prefer ~/.local/bin
+whi prefer ~/.local/bin (except this, no executable provided -> acts like fish_add_paht)
+
 
 # Move and swap entries by index (1-based)
 whi move 12 1
 whi switch 4 9
 
-# Clean duplicates, delete entries
+# Clean duplicates
 whi clean
-whi delete 3 9
-whi delete ~/.local/bin
-whi delete build temp
+
+# Delete entries
+whi delete 3 9 (specific, multiple)
+whi delete ~/.local/bin (specific, single)
+whi delete build temp (fuzzy all paths that match)
 
 # Inspect and persist PATH state
 whi diff              # current shell
@@ -60,8 +75,10 @@ whi save all          # every shell
 ```bash
 whi node                 # show the first match (with PATH index)
 whi --all node           # list every match
-whi --full node          # list matches, then highlight PATH entries
-whi --path "custom:path" python
+
+# This is cool ... list all matches, newline, list full path
+# with all path entries containing the binary highlighted
+whi --full cargo
 ```
 
 Useful flags:
