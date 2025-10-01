@@ -23,8 +23,16 @@ __whi_apply_path() {
 }
 
 whim() {
+    case "$1" in
+        help|--help|-h)
+            echo "Usage: whim FROM TO"
+            echo "  Move PATH entry from index FROM to index TO"
+            return 0
+            ;;
+    esac
     if [ "$#" -ne 2 ]; then
         echo "Usage: whim FROM TO" >&2
+        echo "  Move PATH entry from index FROM to index TO" >&2
         return 2
     fi
 
@@ -32,8 +40,16 @@ whim() {
 }
 
 whis() {
+    case "$1" in
+        help|--help|-h)
+            echo "Usage: whis IDX1 IDX2"
+            echo "  Swap PATH entries at indices IDX1 and IDX2"
+            return 0
+            ;;
+    esac
     if [ "$#" -ne 2 ]; then
         echo "Usage: whis IDX1 IDX2" >&2
+        echo "  Swap PATH entries at indices IDX1 and IDX2" >&2
         return 2
     fi
 
@@ -41,14 +57,28 @@ whis() {
 }
 
 whip() {
+    case "$1" in
+        help|--help|-h)
+            echo "Usage: whip [NAME] TARGET [PATTERN...]"
+            echo "  Add path to PATH or prefer executable at target"
+            echo "  TARGET can be index, path, or fuzzy pattern"
+            echo "Examples:"
+            echo "  whip ~/.cargo/bin           # Add path to PATH (if not present)"
+            echo "  whip cargo 3                # Use cargo from PATH index 3"
+            echo "  whip cargo ~/.cargo/bin     # Add/prefer ~/.cargo/bin for cargo"
+            echo "  whip bat github release     # Use bat from path matching pattern"
+            return 0
+            ;;
+    esac
     if [ "$#" -lt 1 ]; then
         echo "Usage: whip [NAME] TARGET [PATTERN...]" >&2
         echo "  Add path to PATH or prefer executable at target" >&2
+        echo "  TARGET can be index, path, or fuzzy pattern" >&2
         echo "Examples:" >&2
-        echo "  whip ~/.cargo/bin         # Add path to PATH (if not present)" >&2
-        echo "  whip cargo 3              # Use cargo from PATH index 3" >&2
-        echo "  whip cargo ~/.cargo/bin   # Add/prefer ~/.cargo/bin for cargo" >&2
-        echo "  whip bat github release   # Use bat from path matching pattern" >&2
+        echo "  whip ~/.cargo/bin           # Add path to PATH (if not present)" >&2
+        echo "  whip cargo 3                # Use cargo from PATH index 3" >&2
+        echo "  whip cargo ~/.cargo/bin     # Add/prefer ~/.cargo/bin for cargo" >&2
+        echo "  whip bat github release     # Use bat from path matching pattern" >&2
         return 2
     fi
 
@@ -62,19 +92,44 @@ whip() {
 }
 
 whic() {
+    case "$1" in
+        help|--help|-h)
+            echo "Usage: whic"
+            echo "  Remove duplicate entries from PATH"
+            return 0
+            ;;
+    esac
+    if [ "$#" -ne 0 ]; then
+        echo "Usage: whic" >&2
+        echo "  Remove duplicate entries from PATH" >&2
+        return 2
+    fi
     __whi_apply_path clean
 }
 
 whid() {
+    case "$1" in
+        help|--help|-h)
+            echo "Usage: whid TARGET [TARGET...]"
+            echo "  TARGET can be index, path, or fuzzy pattern"
+            echo "  Fuzzy patterns delete ALL matching entries"
+            echo "Examples:"
+            echo "  whid 3                      # Delete PATH entry at index 3"
+            echo "  whid 2 5 7                  # Delete multiple indices"
+            echo "  whid ~/.local/bin           # Delete ~/.local/bin from PATH"
+            echo "  whid temp bin               # Delete ALL entries matching pattern"
+            return 0
+            ;;
+    esac
     if [ "$#" -lt 1 ]; then
-        echo "Usage: whid TARGET [ARGS...]" >&2
+        echo "Usage: whid TARGET [TARGET...]" >&2
         echo "  TARGET can be index, path, or fuzzy pattern" >&2
-        echo "  Cannot mix indices and paths in one command" >&2
+        echo "  Fuzzy patterns delete ALL matching entries" >&2
         echo "Examples:" >&2
-        echo "  whid 3                  # Delete PATH entry at index 3" >&2
-        echo "  whid ~/.local/bin       # Delete ~/.local/bin from PATH" >&2
-        echo "  whid temp bin           # Delete ALL entries matching pattern" >&2
-        echo "  whid 2 5 7              # Delete multiple indices" >&2
+        echo "  whid 3                      # Delete PATH entry at index 3" >&2
+        echo "  whid 2 5 7                  # Delete multiple indices" >&2
+        echo "  whid ~/.local/bin           # Delete ~/.local/bin from PATH" >&2
+        echo "  whid temp bin               # Delete ALL entries matching pattern" >&2
         return 2
     fi
 
@@ -102,26 +157,110 @@ whi() {
         case "$1" in
             prefer)
                 shift
+                case "$1" in
+                    help|--help|-h)
+                        echo "Usage: whi prefer [NAME] TARGET [PATTERN...]"
+                        echo "  Add path to PATH or prefer executable at target"
+                        echo "  TARGET can be index, path, or fuzzy pattern"
+                        echo "Examples:"
+                        echo "  whi prefer ~/.cargo/bin           # Add path to PATH (if not present)"
+                        echo "  whi prefer cargo 3                # Use cargo from PATH index 3"
+                        echo "  whi prefer cargo ~/.cargo/bin     # Add/prefer ~/.cargo/bin for cargo"
+                        echo "  whi prefer bat github release     # Use bat from path matching pattern"
+                        return 0
+                        ;;
+                esac
+                if [ "$#" -lt 1 ]; then
+                    echo "Usage: whi prefer [NAME] TARGET [PATTERN...]" >&2
+                    echo "  Add path to PATH or prefer executable at target" >&2
+                    echo "  TARGET can be index, path, or fuzzy pattern" >&2
+                    echo "Examples:" >&2
+                    echo "  whi prefer ~/.cargo/bin           # Add path to PATH (if not present)" >&2
+                    echo "  whi prefer cargo 3                # Use cargo from PATH index 3" >&2
+                    echo "  whi prefer cargo ~/.cargo/bin     # Add/prefer ~/.cargo/bin for cargo" >&2
+                    echo "  whi prefer bat github release     # Use bat from path matching pattern" >&2
+                    return 2
+                fi
                 __whi_apply_path prefer "$@"
                 return $?
                 ;;
             move)
                 shift
+                case "$1" in
+                    help|--help|-h)
+                        echo "Usage: whi move FROM TO"
+                        echo "  Move PATH entry from index FROM to index TO"
+                        return 0
+                        ;;
+                esac
+                if [ "$#" -ne 2 ]; then
+                    echo "Usage: whi move FROM TO" >&2
+                    echo "  Move PATH entry from index FROM to index TO" >&2
+                    return 2
+                fi
                 __whi_apply_path move "$@"
                 return $?
                 ;;
             switch)
                 shift
+                case "$1" in
+                    help|--help|-h)
+                        echo "Usage: whi switch IDX1 IDX2"
+                        echo "  Swap PATH entries at indices IDX1 and IDX2"
+                        return 0
+                        ;;
+                esac
+                if [ "$#" -ne 2 ]; then
+                    echo "Usage: whi switch IDX1 IDX2" >&2
+                    echo "  Swap PATH entries at indices IDX1 and IDX2" >&2
+                    return 2
+                fi
                 __whi_apply_path swap "$@"
                 return $?
                 ;;
             clean)
                 shift
+                case "$1" in
+                    help|--help|-h)
+                        echo "Usage: whi clean"
+                        echo "  Remove duplicate entries from PATH"
+                        return 0
+                        ;;
+                esac
+                if [ "$#" -ne 0 ]; then
+                    echo "Usage: whi clean" >&2
+                    echo "  Remove duplicate entries from PATH" >&2
+                    return 2
+                fi
                 __whi_apply_path clean "$@"
                 return $?
                 ;;
             delete)
                 shift
+                case "$1" in
+                    help|--help|-h)
+                        echo "Usage: whi delete TARGET [TARGET...]"
+                        echo "  TARGET can be index, path, or fuzzy pattern"
+                        echo "  Fuzzy patterns delete ALL matching entries"
+                        echo "Examples:"
+                        echo "  whi delete 3                      # Delete PATH entry at index 3"
+                        echo "  whi delete 2 5 7                  # Delete multiple indices"
+                        echo "  whi delete ~/.local/bin           # Delete ~/.local/bin from PATH"
+                        echo "  whi delete temp bin               # Delete ALL entries matching pattern"
+                        return 0
+                        ;;
+                esac
+                if [ "$#" -lt 1 ]; then
+                    echo "Usage: whi delete TARGET [TARGET...]" >&2
+                    echo "  TARGET can be index, path, or fuzzy pattern" >&2
+                    echo "  Fuzzy patterns delete ALL matching entries" >&2
+                    echo "Examples:" >&2
+                    echo "  whi delete 3                      # Delete PATH entry at index 3" >&2
+                    echo "  whi delete 2 5 7                  # Delete multiple indices" >&2
+                    echo "  whi delete ~/.local/bin           # Delete ~/.local/bin from PATH" >&2
+                    echo "  whi delete temp bin               # Delete ALL entries matching pattern" >&2
+                    return 2
+                fi
                 __whi_apply_path delete "$@"
                 return $?
                 ;;
@@ -157,8 +296,16 @@ __whi_apply_path() {
 }
 
 whim() {
+    case "$1" in
+        help|--help|-h)
+            echo "Usage: whim FROM TO"
+            echo "  Move PATH entry from index FROM to index TO"
+            return 0
+            ;;
+    esac
     if [ "$#" -ne 2 ]; then
         echo "Usage: whim FROM TO" >&2
+        echo "  Move PATH entry from index FROM to index TO" >&2
         return 2
     fi
 
@@ -166,8 +313,16 @@ whim() {
 }
 
 whis() {
+    case "$1" in
+        help|--help|-h)
+            echo "Usage: whis IDX1 IDX2"
+            echo "  Swap PATH entries at indices IDX1 and IDX2"
+            return 0
+            ;;
+    esac
     if [ "$#" -ne 2 ]; then
         echo "Usage: whis IDX1 IDX2" >&2
+        echo "  Swap PATH entries at indices IDX1 and IDX2" >&2
         return 2
     fi
 
@@ -175,14 +330,28 @@ whis() {
 }
 
 whip() {
+    case "$1" in
+        help|--help|-h)
+            echo "Usage: whip [NAME] TARGET [PATTERN...]"
+            echo "  Add path to PATH or prefer executable at target"
+            echo "  TARGET can be index, path, or fuzzy pattern"
+            echo "Examples:"
+            echo "  whip ~/.cargo/bin           # Add path to PATH (if not present)"
+            echo "  whip cargo 3                # Use cargo from PATH index 3"
+            echo "  whip cargo ~/.cargo/bin     # Add/prefer ~/.cargo/bin for cargo"
+            echo "  whip bat github release     # Use bat from path matching pattern"
+            return 0
+            ;;
+    esac
     if [ "$#" -lt 1 ]; then
         echo "Usage: whip [NAME] TARGET [PATTERN...]" >&2
         echo "  Add path to PATH or prefer executable at target" >&2
+        echo "  TARGET can be index, path, or fuzzy pattern" >&2
         echo "Examples:" >&2
-        echo "  whip ~/.cargo/bin         # Add path to PATH (if not present)" >&2
-        echo "  whip cargo 3              # Use cargo from PATH index 3" >&2
-        echo "  whip cargo ~/.cargo/bin   # Add/prefer ~/.cargo/bin for cargo" >&2
-        echo "  whip bat github release   # Use bat from path matching pattern" >&2
+        echo "  whip ~/.cargo/bin           # Add path to PATH (if not present)" >&2
+        echo "  whip cargo 3                # Use cargo from PATH index 3" >&2
+        echo "  whip cargo ~/.cargo/bin     # Add/prefer ~/.cargo/bin for cargo" >&2
+        echo "  whip bat github release     # Use bat from path matching pattern" >&2
         return 2
     fi
 
@@ -196,19 +365,44 @@ whip() {
 }
 
 whic() {
+    case "$1" in
+        help|--help|-h)
+            echo "Usage: whic"
+            echo "  Remove duplicate entries from PATH"
+            return 0
+            ;;
+    esac
+    if [ "$#" -ne 0 ]; then
+        echo "Usage: whic" >&2
+        echo "  Remove duplicate entries from PATH" >&2
+        return 2
+    fi
     __whi_apply_path clean
 }
 
 whid() {
+    case "$1" in
+        help|--help|-h)
+            echo "Usage: whid TARGET [TARGET...]"
+            echo "  TARGET can be index, path, or fuzzy pattern"
+            echo "  Fuzzy patterns delete ALL matching entries"
+            echo "Examples:"
+            echo "  whid 3                      # Delete PATH entry at index 3"
+            echo "  whid 2 5 7                  # Delete multiple indices"
+            echo "  whid ~/.local/bin           # Delete ~/.local/bin from PATH"
+            echo "  whid temp bin               # Delete ALL entries matching pattern"
+            return 0
+            ;;
+    esac
     if [ "$#" -lt 1 ]; then
-        echo "Usage: whid TARGET [ARGS...]" >&2
+        echo "Usage: whid TARGET [TARGET...]" >&2
         echo "  TARGET can be index, path, or fuzzy pattern" >&2
-        echo "  Cannot mix indices and paths in one command" >&2
+        echo "  Fuzzy patterns delete ALL matching entries" >&2
         echo "Examples:" >&2
-        echo "  whid 3                  # Delete PATH entry at index 3" >&2
-        echo "  whid ~/.local/bin       # Delete ~/.local/bin from PATH" >&2
-        echo "  whid temp bin           # Delete ALL entries matching pattern" >&2
-        echo "  whid 2 5 7              # Delete multiple indices" >&2
+        echo "  whid 3                      # Delete PATH entry at index 3" >&2
+        echo "  whid 2 5 7                  # Delete multiple indices" >&2
+        echo "  whid ~/.local/bin           # Delete ~/.local/bin from PATH" >&2
+        echo "  whid temp bin               # Delete ALL entries matching pattern" >&2
         return 2
     fi
 
@@ -236,26 +430,110 @@ whi() {
         case "$1" in
             prefer)
                 shift
+                case "$1" in
+                    help|--help|-h)
+                        echo "Usage: whi prefer [NAME] TARGET [PATTERN...]"
+                        echo "  Add path to PATH or prefer executable at target"
+                        echo "  TARGET can be index, path, or fuzzy pattern"
+                        echo "Examples:"
+                        echo "  whi prefer ~/.cargo/bin           # Add path to PATH (if not present)"
+                        echo "  whi prefer cargo 3                # Use cargo from PATH index 3"
+                        echo "  whi prefer cargo ~/.cargo/bin     # Add/prefer ~/.cargo/bin for cargo"
+                        echo "  whi prefer bat github release     # Use bat from path matching pattern"
+                        return 0
+                        ;;
+                esac
+                if [ "$#" -lt 1 ]; then
+                    echo "Usage: whi prefer [NAME] TARGET [PATTERN...]" >&2
+                    echo "  Add path to PATH or prefer executable at target" >&2
+                    echo "  TARGET can be index, path, or fuzzy pattern" >&2
+                    echo "Examples:" >&2
+                    echo "  whi prefer ~/.cargo/bin           # Add path to PATH (if not present)" >&2
+                    echo "  whi prefer cargo 3                # Use cargo from PATH index 3" >&2
+                    echo "  whi prefer cargo ~/.cargo/bin     # Add/prefer ~/.cargo/bin for cargo" >&2
+                    echo "  whi prefer bat github release     # Use bat from path matching pattern" >&2
+                    return 2
+                fi
                 __whi_apply_path prefer "$@"
                 return $?
                 ;;
             move)
                 shift
+                case "$1" in
+                    help|--help|-h)
+                        echo "Usage: whi move FROM TO"
+                        echo "  Move PATH entry from index FROM to index TO"
+                        return 0
+                        ;;
+                esac
+                if [ "$#" -ne 2 ]; then
+                    echo "Usage: whi move FROM TO" >&2
+                    echo "  Move PATH entry from index FROM to index TO" >&2
+                    return 2
+                fi
                 __whi_apply_path move "$@"
                 return $?
                 ;;
             switch)
                 shift
+                case "$1" in
+                    help|--help|-h)
+                        echo "Usage: whi switch IDX1 IDX2"
+                        echo "  Swap PATH entries at indices IDX1 and IDX2"
+                        return 0
+                        ;;
+                esac
+                if [ "$#" -ne 2 ]; then
+                    echo "Usage: whi switch IDX1 IDX2" >&2
+                    echo "  Swap PATH entries at indices IDX1 and IDX2" >&2
+                    return 2
+                fi
                 __whi_apply_path swap "$@"
                 return $?
                 ;;
             clean)
                 shift
+                case "$1" in
+                    help|--help|-h)
+                        echo "Usage: whi clean"
+                        echo "  Remove duplicate entries from PATH"
+                        return 0
+                        ;;
+                esac
+                if [ "$#" -ne 0 ]; then
+                    echo "Usage: whi clean" >&2
+                    echo "  Remove duplicate entries from PATH" >&2
+                    return 2
+                fi
                 __whi_apply_path clean "$@"
                 return $?
                 ;;
             delete)
                 shift
+                case "$1" in
+                    help|--help|-h)
+                        echo "Usage: whi delete TARGET [TARGET...]"
+                        echo "  TARGET can be index, path, or fuzzy pattern"
+                        echo "  Fuzzy patterns delete ALL matching entries"
+                        echo "Examples:"
+                        echo "  whi delete 3                      # Delete PATH entry at index 3"
+                        echo "  whi delete 2 5 7                  # Delete multiple indices"
+                        echo "  whi delete ~/.local/bin           # Delete ~/.local/bin from PATH"
+                        echo "  whi delete temp bin               # Delete ALL entries matching pattern"
+                        return 0
+                        ;;
+                esac
+                if [ "$#" -lt 1 ]; then
+                    echo "Usage: whi delete TARGET [TARGET...]" >&2
+                    echo "  TARGET can be index, path, or fuzzy pattern" >&2
+                    echo "  Fuzzy patterns delete ALL matching entries" >&2
+                    echo "Examples:" >&2
+                    echo "  whi delete 3                      # Delete PATH entry at index 3" >&2
+                    echo "  whi delete 2 5 7                  # Delete multiple indices" >&2
+                    echo "  whi delete ~/.local/bin           # Delete ~/.local/bin from PATH" >&2
+                    echo "  whi delete temp bin               # Delete ALL entries matching pattern" >&2
+                    return 2
+                fi
                 __whi_apply_path delete "$@"
                 return $?
                 ;;
@@ -290,8 +568,14 @@ function __whi_apply
 end
 
 function whim
+    if test (count $argv) -ge 1; and contains -- $argv[1] help --help -h
+        echo "Usage: whim FROM TO"
+        echo "  Move PATH entry from index FROM to index TO"
+        return 0
+    end
     if test (count $argv) -ne 2
         echo "Usage: whim FROM TO" >&2
+        echo "  Move PATH entry from index FROM to index TO" >&2
         return 2
     end
 
@@ -299,8 +583,14 @@ function whim
 end
 
 function whis
+    if test (count $argv) -ge 1; and contains -- $argv[1] help --help -h
+        echo "Usage: whis IDX1 IDX2"
+        echo "  Swap PATH entries at indices IDX1 and IDX2"
+        return 0
+    end
     if test (count $argv) -ne 2
         echo "Usage: whis IDX1 IDX2" >&2
+        echo "  Swap PATH entries at indices IDX1 and IDX2" >&2
         return 2
     end
 
@@ -308,8 +598,26 @@ function whis
 end
 
 function whip
+    if test (count $argv) -ge 1; and contains -- $argv[1] help --help -h
+        echo "Usage: whip [NAME] TARGET [PATTERN...]"
+        echo "  Add path to PATH or prefer executable at target"
+        echo "  TARGET can be index, path, or fuzzy pattern"
+        echo "Examples:"
+        echo "  whip ~/.cargo/bin           # Add path to PATH (if not present)"
+        echo "  whip cargo 3                # Use cargo from PATH index 3"
+        echo "  whip cargo ~/.cargo/bin     # Add/prefer ~/.cargo/bin for cargo"
+        echo "  whip bat github release     # Use bat from path matching pattern"
+        return 0
+    end
     if test (count $argv) -lt 1
         echo "Usage: whip [NAME] TARGET [PATTERN...]" >&2
+        echo "  Add path to PATH or prefer executable at target" >&2
+        echo "  TARGET can be index, path, or fuzzy pattern" >&2
+        echo "Examples:" >&2
+        echo "  whip ~/.cargo/bin           # Add path to PATH (if not present)" >&2
+        echo "  whip cargo 3                # Use cargo from PATH index 3" >&2
+        echo "  whip cargo ~/.cargo/bin     # Add/prefer ~/.cargo/bin for cargo" >&2
+        echo "  whip bat github release     # Use bat from path matching pattern" >&2
         return 2
     end
 
@@ -322,12 +630,40 @@ function whip
 end
 
 function whic
+    if test (count $argv) -ge 1; and contains -- $argv[1] help --help -h
+        echo "Usage: whic"
+        echo "  Remove duplicate entries from PATH"
+        return 0
+    end
+    if test (count $argv) -ne 0
+        echo "Usage: whic" >&2
+        echo "  Remove duplicate entries from PATH" >&2
+        return 2
+    end
     __whi_apply clean
 end
 
 function whid
+    if test (count $argv) -ge 1; and contains -- $argv[1] help --help -h
+        echo "Usage: whid TARGET [TARGET...]"
+        echo "  TARGET can be index, path, or fuzzy pattern"
+        echo "  Fuzzy patterns delete ALL matching entries"
+        echo "Examples:"
+        echo "  whid 3                      # Delete PATH entry at index 3"
+        echo "  whid 2 5 7                  # Delete multiple indices"
+        echo "  whid ~/.local/bin           # Delete ~/.local/bin from PATH"
+        echo "  whid temp bin               # Delete ALL entries matching pattern"
+        return 0
+    end
     if test (count $argv) -lt 1
-        echo "Usage: whid TARGET [ARGS...]" >&2
+        echo "Usage: whid TARGET [TARGET...]" >&2
+        echo "  TARGET can be index, path, or fuzzy pattern" >&2
+        echo "  Fuzzy patterns delete ALL matching entries" >&2
+        echo "Examples:" >&2
+        echo "  whid 3                      # Delete PATH entry at index 3" >&2
+        echo "  whid 2 5 7                  # Delete multiple indices" >&2
+        echo "  whid ~/.local/bin           # Delete ~/.local/bin from PATH" >&2
+        echo "  whid temp bin               # Delete ALL entries matching pattern" >&2
         return 2
     end
 
@@ -354,18 +690,97 @@ function whi
     if test (count $argv) -gt 0
         switch $argv[1]
             case prefer
+                # Check for help request
+                if test (count $argv) -ge 2; and contains -- $argv[2] help --help -h
+                    echo "Usage: whi prefer [NAME] TARGET [PATTERN...]"
+                    echo "  Add path to PATH or prefer executable at target"
+                    echo "  TARGET can be index, path, or fuzzy pattern"
+                    echo "Examples:"
+                    echo "  whi prefer ~/.cargo/bin           # Add path to PATH (if not present)"
+                    echo "  whi prefer cargo 3                # Use cargo from PATH index 3"
+                    echo "  whi prefer cargo ~/.cargo/bin     # Add/prefer ~/.cargo/bin for cargo"
+                    echo "  whi prefer bat github release     # Use bat from path matching pattern"
+                    return 0
+                end
+                if test (count $argv) -lt 2
+                    echo "Usage: whi prefer [NAME] TARGET [PATTERN...]" >&2
+                    echo "  Add path to PATH or prefer executable at target" >&2
+                    echo "  TARGET can be index, path, or fuzzy pattern" >&2
+                    echo "Examples:" >&2
+                    echo "  whi prefer ~/.cargo/bin           # Add path to PATH (if not present)" >&2
+                    echo "  whi prefer cargo 3                # Use cargo from PATH index 3" >&2
+                    echo "  whi prefer cargo ~/.cargo/bin     # Add/prefer ~/.cargo/bin for cargo" >&2
+                    echo "  whi prefer bat github release     # Use bat from path matching pattern" >&2
+                    return 2
+                end
                 __whi_apply prefer $argv[2..-1]
                 return $status
             case move
+                # Check for help request
+                if test (count $argv) -ge 2; and contains -- $argv[2] help --help -h
+                    echo "Usage: whi move FROM TO"
+                    echo "  Move PATH entry from index FROM to index TO"
+                    return 0
+                end
+                if test (count $argv) -ne 3
+                    echo "Usage: whi move FROM TO" >&2
+                    echo "  Move PATH entry from index FROM to index TO" >&2
+                    return 2
+                end
                 __whi_apply move $argv[2..-1]
                 return $status
             case switch
+                # Check for help request
+                if test (count $argv) -ge 2; and contains -- $argv[2] help --help -h
+                    echo "Usage: whi switch IDX1 IDX2"
+                    echo "  Swap PATH entries at indices IDX1 and IDX2"
+                    return 0
+                end
+                if test (count $argv) -ne 3
+                    echo "Usage: whi switch IDX1 IDX2" >&2
+                    echo "  Swap PATH entries at indices IDX1 and IDX2" >&2
+                    return 2
+                end
                 __whi_apply swap $argv[2..-1]
                 return $status
             case clean
+                # Check for help request
+                if test (count $argv) -ge 2; and contains -- $argv[2] help --help -h
+                    echo "Usage: whi clean"
+                    echo "  Remove duplicate entries from PATH"
+                    return 0
+                end
+                if test (count $argv) -ne 1
+                    echo "Usage: whi clean" >&2
+                    echo "  Remove duplicate entries from PATH" >&2
+                    return 2
+                end
                 __whi_apply clean $argv[2..-1]
                 return $status
             case delete
+                # Check for help request
+                if test (count $argv) -ge 2; and contains -- $argv[2] help --help -h
+                    echo "Usage: whi delete TARGET [TARGET...]"
+                    echo "  TARGET can be index, path, or fuzzy pattern"
+                    echo "  Fuzzy patterns delete ALL matching entries"
+                    echo "Examples:"
+                    echo "  whi delete 3                      # Delete PATH entry at index 3"
+                    echo "  whi delete 2 5 7                  # Delete multiple indices"
+                    echo "  whi delete ~/.local/bin           # Delete ~/.local/bin from PATH"
+                    echo "  whi delete temp bin               # Delete ALL entries matching pattern"
+                    return 0
+                end
+                if test (count $argv) -lt 2
+                    echo "Usage: whi delete TARGET [TARGET...]" >&2
+                    echo "  TARGET can be index, path, or fuzzy pattern" >&2
+                    echo "  Fuzzy patterns delete ALL matching entries" >&2
+                    echo "Examples:" >&2
+                    echo "  whi delete 3                      # Delete PATH entry at index 3" >&2
+                    echo "  whi delete 2 5 7                  # Delete multiple indices" >&2
+                    echo "  whi delete ~/.local/bin           # Delete ~/.local/bin from PATH" >&2
+                    echo "  whi delete temp bin               # Delete ALL entries matching pattern" >&2
+                    return 2
+                end
                 __whi_apply delete $argv[2..-1]
                 return $status
         end
