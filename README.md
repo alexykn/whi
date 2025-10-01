@@ -34,7 +34,9 @@ Saved PATH to zsh (68 entries)
 - **Session-based by default**: Changes only affect current shell, safe to experiment
 - **Persistence when you want it**: Use `whi diff` to review, `whi save` to persist
 - **Better than which**: Shows winner by default, all matches with `-a`
-- **PATH manipulation**: Move, swap, delete, and clean duplicates with simple commands
+- **PATH manipulation**: Move, swap, delete, clean duplicates, and prefer executables
+- **Path-based operations**: Add/prefer paths directly, supports tilde expansion and relative paths
+- **Fuzzy matching**: Zoxide-style pattern matching for paths (no quotes needed)
 - **Winner indication**: Clearly marks which executable would actually run with color
 - **PATH indices** (`-i`): Shows the PATH index for each match
 - **Full PATH listing** (`-f`): Displays complete PATH with indices
@@ -95,9 +97,20 @@ The `whi init <shell>` command outputs shell-specific functions that you can eva
   $ whis 10 41     # Swap entries at indices 10 and 41
   ```
 
-- **`whip NAME INDEX`** - Make executable at INDEX win (prefer it over others)
+- **`whip NAME TARGET`** - Make executable win, or add path to PATH
   ```bash
-  $ whip cargo 50  # Make cargo at index 50 the winner
+  # Index-based (original)
+  $ whip cargo 50                  # Make cargo at index 50 the winner
+
+  # Path-based (new)
+  $ whip cargo ~/.cargo/bin        # Add/prefer cargo from ~/.cargo/bin
+  $ whip bat ./target/release      # Prefer bat from relative path
+
+  # Fuzzy matching (new, no quotes needed)
+  $ whip bat github release        # Prefer bat from path matching 'github' and 'release'
+
+  # Path-only (new, like fish_add_path)
+  $ whip ~/.local/bin              # Add path to PATH if not present
   ```
 
 - **`whic`** - Clean duplicate PATH entries (keeps first occurrence)
@@ -105,10 +118,19 @@ The `whi init <shell>` command outputs shell-specific functions that you can eva
   $ whic           # Remove all duplicate entries
   ```
 
-- **`whid INDEX...`** - Delete PATH entries at one or more indices
+- **`whid TARGET...`** - Delete PATH entries by index, path, or fuzzy pattern
   ```bash
-  $ whid 5         # Delete entry at index 5
-  $ whid 5 16 7    # Delete entries at indices 5, 16, and 7
+  # Index-based (original)
+  $ whid 5                       # Delete entry at index 5
+  $ whid 5 16 7                  # Delete entries at indices 5, 16, and 7
+
+  # Path-based (new)
+  $ whid /opt/homebrew/bin       # Delete exact path
+  $ whid ~/.local/bin            # Delete with tilde expansion
+
+  # Fuzzy matching (new, deletes ALL matches)
+  $ whid old temp                # Delete ALL paths matching 'old' and 'temp'
+  $ whid local bin               # Delete ALL paths matching pattern
   ```
 
 - **`whia NAME`** - Show all matches with indices (shortcut for `whi -ia`)
@@ -415,10 +437,21 @@ These commands output a modified PATH string to stdout. Use shell integration (s
   /modified/path/string/...
   ```
 
-- **`--prefer <NAME> <INDEX>`** - Make executable NAME at INDEX win
+- **`--prefer <NAME> <TARGET>`** or **`--prefer <PATH>`** - Make executable win or add path
   ```bash
+  # Index-based
   $ whi --prefer cargo 50
   /modified/path/string/...
+
+  # Path-based (adds path at winning position if not present)
+  $ whi --prefer cargo ~/.cargo/bin
+  $ whi --prefer bat /usr/local/bin
+
+  # Fuzzy matching (must match exactly one path)
+  $ whi --prefer bat github release
+
+  # Path-only (like fish_add_path)
+  $ whi --prefer ~/.local/bin
   ```
 
 - **`--clean` / `-c`** - Remove duplicate PATH entries (keeps first occurrence)
@@ -427,10 +460,19 @@ These commands output a modified PATH string to stdout. Use shell integration (s
   /deduplicated/path/...
   ```
 
-- **`--delete <INDEX>...` / `-d`** - Delete one or more PATH entries by index
+- **`--delete <TARGET>...` / `-d`** - Delete PATH entries by index, path, or fuzzy pattern
   ```bash
+  # Index-based
   $ whi --delete 5 16 7
   /path/without/those/entries...
+
+  # Path-based
+  $ whi --delete /opt/homebrew/bin
+  $ whi --delete ~/.local/bin
+
+  # Fuzzy matching (deletes ALL matches)
+  $ whi --delete old temp
+  $ whi --delete local bin
   ```
 
 ### Persistence
@@ -523,6 +565,30 @@ $ whi -i       # Or use whii shortcut
 [2] /usr/bin
 [3] /bin
 ...
+```
+
+Prefer cargo from a specific path (adds if needed):
+
+```bash
+$ whip cargo ~/.cargo/bin
+```
+
+Add a path to PATH (like fish_add_path):
+
+```bash
+$ whip ~/.local/bin
+```
+
+Use fuzzy matching to prefer bat from GitHub release:
+
+```bash
+$ whip bat github release    # Matches /path/to/github/whi/target/release
+```
+
+Delete all temporary build paths:
+
+```bash
+$ whid temp build            # Deletes ALL paths matching both 'temp' and 'build'
 ```
 
 ## Comparison with `which`
