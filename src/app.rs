@@ -2,49 +2,18 @@ use std::env;
 use std::fs;
 use std::io::{self, BufRead, BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::process;
 
-mod atomic_file;
-mod cli;
-mod config_manager;
-mod executor;
-mod output;
-mod path;
-mod path_diff;
-mod path_resolver;
-mod session_tracker;
-mod shell_detect;
-mod shell_integration;
-mod system;
-
-use cli::{Args, ColorWhen};
-use executor::{ExecutableCheck, SearchResult};
-use output::OutputFormatter;
-use path::PathSearcher;
-
-fn main() {
-    let args = match Args::parse() {
-        Ok(args) => args,
-        Err(e) => {
-            eprintln!("Error: {e}");
-            process::exit(2);
-        }
-    };
-
-    if args.silent {
-        // Suppress all stderr
-        let result = run(&args);
-        process::exit(result);
-    }
-
-    match run(&args) {
-        0 => process::exit(0),
-        code => process::exit(code),
-    }
-}
+use crate::cli::{Args, ColorWhen};
+use crate::executor::{ExecutableCheck, SearchResult};
+use crate::output::OutputFormatter;
+use crate::path::PathSearcher;
+use crate::path_resolver;
+use crate::session_tracker;
+use crate::shell_integration;
+use crate::system;
 
 #[allow(clippy::too_many_lines)]
-fn run(args: &Args) -> i32 {
+pub fn run(args: &Args) -> i32 {
     // Handle init subcommand
     if let Some(ref shell) = args.init_shell {
         match shell_integration::generate_init_script(shell) {
@@ -52,8 +21,8 @@ fn run(args: &Args) -> i32 {
                 print!("{script}");
                 return 0;
             }
-            Err(e) => {
-                eprintln!("Error: {e}");
+            Err(err) => {
+                eprintln!("Error: {err}");
                 return 2;
             }
         }
@@ -226,6 +195,11 @@ fn run(args: &Args) -> i32 {
     }
 
     let mut all_found = true;
+    if names.is_empty() {
+        eprintln!("Usage: whi [OPTIONS] [NAME]...\n       whi <COMMAND>\n\nTry 'whi --help' for more information.");
+        return 2;
+    }
+
     let stderr = io::stderr();
     let mut err = BufWriter::new(stderr.lock());
 
@@ -394,11 +368,11 @@ fn should_use_color(args: &Args) -> bool {
 
 fn handle_prefer<W: Write>(
     searcher: &PathSearcher,
-    target: &cli::PreferTarget,
+    target: &crate::cli::PreferTarget,
     args: &Args,
     out: &mut W,
 ) -> i32 {
-    use cli::PreferTarget;
+    use crate::cli::PreferTarget;
 
     match target {
         PreferTarget::IndexBased { name, index } => {
@@ -704,12 +678,12 @@ fn handle_prefer_fuzzy<W: Write>(
 
 fn handle_delete<W: Write>(
     searcher: &PathSearcher,
-    targets: &[cli::DeleteTarget],
+    targets: &[crate::cli::DeleteTarget],
     args: &Args,
     out: &mut W,
 ) -> i32 {
-    use cli::DeleteTarget;
-    use path_resolver::{looks_like_exact_path, resolve_path};
+    use crate::cli::DeleteTarget;
+    use crate::path_resolver::{looks_like_exact_path, resolve_path};
 
     let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let mut indices_to_delete = Vec::new();
@@ -827,9 +801,9 @@ fn handle_delete<W: Write>(
 }
 
 fn handle_save(shell_opt: &Option<String>) -> i32 {
-    use config_manager::save_path;
-    use session_tracker::{cleanup_old_sessions, clear_session};
-    use shell_detect::{detect_current_shell, Shell};
+    use crate::config_manager::save_path;
+    use crate::session_tracker::{cleanup_old_sessions, clear_session};
+    use crate::shell_detect::{detect_current_shell, Shell};
 
     let path_var = env::var("PATH").unwrap_or_default();
 
@@ -876,7 +850,7 @@ fn handle_save(shell_opt: &Option<String>) -> i32 {
                 }
             } else {
                 // Save to specific shell
-                let shell = match Shell::from_str(shell_str) {
+                let shell = match shell_str.parse::<Shell>() {
                     Ok(s) => s,
                     Err(e) => {
                         eprintln!("Error: {e}");
@@ -919,10 +893,10 @@ fn handle_save(shell_opt: &Option<String>) -> i32 {
 }
 
 fn handle_diff(shell_opt: &Option<String>, full: bool) -> i32 {
-    use config_manager::load_saved_path;
-    use path_diff::{compute_diff, format_diff};
-    use session_tracker::read_session_paths;
-    use shell_detect::{detect_current_shell, Shell};
+    use crate::config_manager::load_saved_path;
+    use crate::path_diff::{compute_diff, format_diff};
+    use crate::session_tracker::read_session_paths;
+    use crate::shell_detect::{detect_current_shell, Shell};
 
     let current_path = env::var("PATH").unwrap_or_default();
     let use_color = atty::is(atty::Stream::Stdout);
@@ -938,7 +912,7 @@ fn handle_diff(shell_opt: &Option<String>, full: bool) -> i32 {
                 }
             }
         }
-        Some(shell_str) => match Shell::from_str(shell_str) {
+        Some(shell_str) => match shell_str.parse::<Shell>() {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("Error: {e}");

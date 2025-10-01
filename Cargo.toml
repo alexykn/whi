@@ -1,9 +1,9 @@
 [package]
 name = "whi"
-version = "0.2.4"
+version = "0.3.0"
 edition = "2021"
 authors = ["Alexander Knott <alexander.knott@posteo.de>"]
-description = "Magically simple PATH management - improved which with PATH manipulation"
+description = "Magically simple PATH management"
 repository = "https://github.com/alexykn/whi"
 readme = "README.md"
 keywords = ["cli", "path", "which", "executable", "unix"]
@@ -11,5 +11,13 @@ categories = ["command-line-utilities"]
 rust-version = "1.90"
 license = "MIT"
 
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "whi"
+path = "src/bin/whi.rs"
+
 [dependencies]
 libc = "0.2"
+clap = { version = "4.5", features = ["derive"] }

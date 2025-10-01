@@ -1,5 +1,6 @@
 use std::env;
 use std::path::PathBuf;
+use std::str::FromStr;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Shell {
@@ -16,8 +17,12 @@ impl Shell {
             Shell::Fish => "fish",
         }
     }
+}
 
-    pub fn from_str(s: &str) -> Result<Self, String> {
+impl FromStr for Shell {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "bash" => Ok(Shell::Bash),
             "zsh" => Ok(Shell::Zsh),
@@ -129,11 +134,11 @@ mod tests {
 
     #[test]
     fn test_shell_from_str() {
-        assert_eq!(Shell::from_str("bash").unwrap(), Shell::Bash);
-        assert_eq!(Shell::from_str("BASH").unwrap(), Shell::Bash);
-        assert_eq!(Shell::from_str("zsh").unwrap(), Shell::Zsh);
-        assert_eq!(Shell::from_str("fish").unwrap(), Shell::Fish);
-        assert!(Shell::from_str("invalid").is_err());
+        assert_eq!("bash".parse::<Shell>().unwrap(), Shell::Bash);
+        assert_eq!("BASH".parse::<Shell>().unwrap(), Shell::Bash);
+        assert_eq!("zsh".parse::<Shell>().unwrap(), Shell::Zsh);
+        assert_eq!("fish".parse::<Shell>().unwrap(), Shell::Fish);
+        assert!("invalid".parse::<Shell>().is_err());
     }
 
     #[test]

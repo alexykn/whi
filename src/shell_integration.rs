@@ -7,7 +7,20 @@ pub fn generate_init_script(shell: &str) -> Result<String, String> {
     }
 }
 
-const BASH_INIT: &str = r#"# whi shell integration for bash
+const BASH_INIT: &str = r#"# whi shell integration for bash (v0.3.0)
+
+__whi_apply_path() {
+    local subcmd="$1"
+    shift
+    local new_path
+    new_path=$(command whi "__${subcmd}" "$@")
+    local status=$?
+    if [ $status -eq 0 ]; then
+        export PATH="$new_path"
+    else
+        return $status
+    fi
+}
 
 whim() {
     if [ "$#" -ne 2 ]; then
@@ -15,13 +28,7 @@ whim() {
         return 2
     fi
 
-    local new_path
-    new_path=$(whi --move "$1" "$2")
-    if [ $? -eq 0 ]; then
-        export PATH="$new_path"
-    else
-        return $?
-    fi
+    __whi_apply_path move "$1" "$2"
 }
 
 whis() {
@@ -30,13 +37,7 @@ whis() {
         return 2
     fi
 
-    local new_path
-    new_path=$(whi --swap "$1" "$2")
-    if [ $? -eq 0 ]; then
-        export PATH="$new_path"
-    else
-        return $?
-    fi
+    __whi_apply_path swap "$1" "$2"
 }
 
 whip() {
@@ -51,42 +52,17 @@ whip() {
         return 2
     fi
 
-    local new_path
-
-    # Check if single argument that looks like a path
     if [ "$#" -eq 1 ] && [[ "$1" =~ [/~.] ]]; then
-        # Path-only mode
-        new_path=$(whi --prefer "$1")
+        __whi_apply_path prefer "$1"
     else
-        # Traditional mode with name and target
         local name="$1"
         shift
-
-        # If multiple args, join them as fuzzy pattern
-        local target="$*"
-
-        new_path=$(whi --prefer "$name" "$target")
+        __whi_apply_path prefer "$name" "$@"
     fi
-
-    if [ $? -eq 0 ]; then
-        export PATH="$new_path"
-    else
-        return $?
-    fi
-}
-
-whia() {
-    whi -ia "$@"
 }
 
 whic() {
-    local new_path
-    new_path=$(whi --clean)
-    if [ $? -eq 0 ]; then
-        export PATH="$new_path"
-    else
-        return $?
-    fi
+    __whi_apply_path clean
 }
 
 whid() {
@@ -102,7 +78,6 @@ whid() {
         return 2
     fi
 
-    # Check if all arguments are numbers (indices)
     local all_numeric=1
     for arg in "$@"; do
         if ! [[ "$arg" =~ ^[0-9]+$ ]]; then
@@ -111,24 +86,75 @@ whid() {
         fi
     done
 
-    local new_path
     if [ "$all_numeric" -eq 1 ]; then
-        # All numeric - pass as separate indices
-        new_path=$(whi --delete "$@")
+        __whi_apply_path delete "$@"
     else
-        # Has non-numeric - join as single fuzzy pattern
-        new_path=$(whi --delete "$*")
-    fi
-
-    if [ $? -eq 0 ]; then
-        export PATH="$new_path"
-    else
-        return $?
+        __whi_apply_path delete "$*"
     fi
 }
-"#;
 
-const ZSH_INIT: &str = r#"# whi shell integration for zsh
+whia() {
+    command whi --all "$@"
+}
+
+whi() {
+    if [ "$#" -gt 0 ]; then
+        case "$1" in
+            prefer)
+                shift
+                __whi_apply_path prefer "$@"
+                return $?
+                ;;
+            move)
+                shift
+                __whi_apply_path move "$@"
+                return $?
+                ;;
+            switch)
+                shift
+                __whi_apply_path swap "$@"
+                return $?
+                ;;
+            clean)
+                shift
+                __whi_apply_path clean "$@"
+                return $?
+                ;;
+            delete)
+                shift
+                __whi_apply_path delete "$@"
+                return $?
+                ;;
+        esac
+    fi
+
+    command whi "$@"
+}
+
+export WHI_SHELL_INITIALIZED=1
+
+# Add this to your shell config (~/.bashrc, ~/.zshrc, etc.):
+#
+#   eval "$(whi init bash)"
+#
+# Or run in the current shell:
+#
+#   eval "$(whi init bash)"
+"#;
+const ZSH_INIT: &str = r#"# whi shell integration for zsh (v0.3.0)
+
+__whi_apply_path() {
+    local subcmd="$1"
+    shift
+    local new_path
+    new_path=$(command whi "__${subcmd}" "$@")
+    local status=$?
+    if [ $status -eq 0 ]; then
+        export PATH="$new_path"
+    else
+        return $status
+    fi
+}
 
 whim() {
     if [ "$#" -ne 2 ]; then
@@ -136,13 +162,7 @@ whim() {
         return 2
     fi
 
-    local new_path
-    new_path=$(whi --move "$1" "$2")
-    if [ $? -eq 0 ]; then
-        export PATH="$new_path"
-    else
-        return $?
-    fi
+    __whi_apply_path move "$1" "$2"
 }
 
 whis() {
@@ -151,13 +171,7 @@ whis() {
         return 2
     fi
 
-    local new_path
-    new_path=$(whi --swap "$1" "$2")
-    if [ $? -eq 0 ]; then
-        export PATH="$new_path"
-    else
-        return $?
-    fi
+    __whi_apply_path swap "$1" "$2"
 }
 
 whip() {
@@ -172,42 +186,17 @@ whip() {
         return 2
     fi
 
-    local new_path
-
-    # Check if single argument that looks like a path
     if [ "$#" -eq 1 ] && [[ "$1" =~ [/~.] ]]; then
-        # Path-only mode
-        new_path=$(whi --prefer "$1")
+        __whi_apply_path prefer "$1"
     else
-        # Traditional mode with name and target
         local name="$1"
         shift
-
-        # If multiple args, join them as fuzzy pattern
-        local target="$*"
-
-        new_path=$(whi --prefer "$name" "$target")
+        __whi_apply_path prefer "$name" "$@"
     fi
-
-    if [ $? -eq 0 ]; then
-        export PATH="$new_path"
-    else
-        return $?
-    fi
-}
-
-whia() {
-    whi -ia "$@"
 }
 
 whic() {
-    local new_path
-    new_path=$(whi --clean)
-    if [ $? -eq 0 ]; then
-        export PATH="$new_path"
-    else
-        return $?
-    fi
+    __whi_apply_path clean
 }
 
 whid() {
@@ -223,7 +212,6 @@ whid() {
         return 2
     fi
 
-    # Check if all arguments are numbers (indices)
     local all_numeric=1
     for arg in "$@"; do
         if ! [[ "$arg" =~ ^[0-9]+$ ]]; then
@@ -232,24 +220,74 @@ whid() {
         fi
     done
 
-    local new_path
     if [ "$all_numeric" -eq 1 ]; then
-        # All numeric - pass as separate indices
-        new_path=$(whi --delete "$@")
+        __whi_apply_path delete "$@"
     else
-        # Has non-numeric - join as single fuzzy pattern
-        new_path=$(whi --delete "$*")
-    fi
-
-    if [ $? -eq 0 ]; then
-        export PATH="$new_path"
-    else
-        return $?
+        __whi_apply_path delete "$*"
     fi
 }
-"#;
 
-const FISH_INIT: &str = r#"# whi shell integration for fish
+whia() {
+    command whi --all "$@"
+}
+
+whi() {
+    if [ "$#" -gt 0 ]; then
+        case "$1" in
+            prefer)
+                shift
+                __whi_apply_path prefer "$@"
+                return $?
+                ;;
+            move)
+                shift
+                __whi_apply_path move "$@"
+                return $?
+                ;;
+            switch)
+                shift
+                __whi_apply_path swap "$@"
+                return $?
+                ;;
+            clean)
+                shift
+                __whi_apply_path clean "$@"
+                return $?
+                ;;
+            delete)
+                shift
+                __whi_apply_path delete "$@"
+                return $?
+                ;;
+        esac
+    fi
+
+    command whi "$@"
+}
+
+export WHI_SHELL_INITIALIZED=1
+
+# Add this to your shell config (~/.zshrc, ~/.bashrc, etc.):
+#
+#   eval "$(whi init zsh)"
+#
+# Or run in the current shell:
+#
+#   eval "$(whi init zsh)"
+"#;
+const FISH_INIT: &str = r#"# whi shell integration for fish (v0.3.0)
+
+function __whi_apply
+    set -l subcmd $argv[1]
+    set -l rest $argv[2..-1]
+    set -l new_path (command whi __$subcmd $rest)
+    set -l exit_code $status
+    if test $exit_code -eq 0
+        set -gx PATH (string split : $new_path)
+    else
+        return $exit_code
+    end
+end
 
 function whim
     if test (count $argv) -ne 2
@@ -257,12 +295,7 @@ function whim
         return 2
     end
 
-    set -l new_path (whi --move $argv[1] $argv[2])
-    if test $status -eq 0
-        set -gx PATH (string split : $new_path)
-    else
-        return $status
-    end
+    __whi_apply move $argv
 end
 
 function whis
@@ -271,77 +304,33 @@ function whis
         return 2
     end
 
-    set -l new_path (whi --swap $argv[1] $argv[2])
-    if test $status -eq 0
-        set -gx PATH (string split : $new_path)
-    else
-        return $status
-    end
+    __whi_apply swap $argv
 end
 
 function whip
     if test (count $argv) -lt 1
         echo "Usage: whip [NAME] TARGET [PATTERN...]" >&2
-        echo "  Add path to PATH or prefer executable at target" >&2
-        echo "Examples:" >&2
-        echo "  whip ~/.cargo/bin         # Add path to PATH (if not present)" >&2
-        echo "  whip cargo 3              # Use cargo from PATH index 3" >&2
-        echo "  whip cargo ~/.cargo/bin   # Add/prefer ~/.cargo/bin for cargo" >&2
-        echo "  whip bat github release   # Use bat from path matching pattern" >&2
         return 2
     end
 
-    set -l new_path
-
-    # Check if single argument that looks like a path
     if test (count $argv) -eq 1 -a (string match -qr '[/~.]' -- $argv[1])
-        # Path-only mode
-        set new_path (whi --prefer $argv[1])
+        __whi_apply prefer $argv
     else
-        # Traditional mode with name and target
         set -l name $argv[1]
-        set -l target $argv[2..]
-
-        # Join multiple args as fuzzy pattern
-        set -l target_str (string join ' ' $target)
-
-        set new_path (whi --prefer $name $target_str)
+        __whi_apply prefer $name $argv[2..-1]
     end
-
-    if test $status -eq 0
-        set -gx PATH (string split : $new_path)
-    else
-        return $status
-    end
-end
-
-function whia
-    whi -ia $argv
 end
 
 function whic
-    set -l new_path (whi --clean)
-    if test $status -eq 0
-        set -gx PATH (string split : $new_path)
-    else
-        return $status
-    end
+    __whi_apply clean
 end
 
 function whid
     if test (count $argv) -lt 1
         echo "Usage: whid TARGET [ARGS...]" >&2
-        echo "  TARGET can be index, path, or fuzzy pattern" >&2
-        echo "  Cannot mix indices and paths in one command" >&2
-        echo "Examples:" >&2
-        echo "  whid 3                  # Delete PATH entry at index 3" >&2
-        echo "  whid ~/.local/bin       # Delete ~/.local/bin from PATH" >&2
-        echo "  whid temp bin           # Delete ALL entries matching pattern" >&2
-        echo "  whid 2 5 7              # Delete multiple indices" >&2
         return 2
     end
 
-    # Check if all arguments are numbers (indices)
     set -l all_numeric 1
     for arg in $argv
         if not string match -qr '^[0-9]+$' -- $arg
@@ -350,19 +339,48 @@ function whid
         end
     end
 
-    set -l new_path
     if test $all_numeric -eq 1
-        # All numeric - pass as separate indices
-        set new_path (whi --delete $argv)
+        __whi_apply delete $argv
     else
-        # Has non-numeric - join as single fuzzy pattern
-        set new_path (whi --delete (string join ' ' $argv))
-    end
-
-    if test $status -eq 0
-        set -gx PATH (string split : $new_path)
-    else
-        return $status
+        __whi_apply delete (string join ' ' $argv)
     end
 end
+
+function whia
+    command whi --all $argv
+end
+
+function whi
+    if test (count $argv) -gt 0
+        switch $argv[1]
+            case prefer
+                __whi_apply prefer $argv[2..-1]
+                return $status
+            case move
+                __whi_apply move $argv[2..-1]
+                return $status
+            case switch
+                __whi_apply swap $argv[2..-1]
+                return $status
+            case clean
+                __whi_apply clean $argv[2..-1]
+                return $status
+            case delete
+                __whi_apply delete $argv[2..-1]
+                return $status
+        end
+    end
+
+    command whi $argv
+end
+
+set -gx WHI_SHELL_INITIALIZED 1
+
+# Add this to your fish config (~/.config/fish/config.fish):
+#
+#   whi init fish | source
+#
+# Or run in the current shell:
+#
+#   whi init fish | source
 "#;
