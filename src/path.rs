@@ -243,6 +243,133 @@ impl PathSearcher {
             .collect::<Vec<_>>()
             .join(":"))
     }
+
+    /// Add a new directory to PATH if not already present at the beginning
+    /// Returns the new PATH string and the index where it was added (1-based)
+    pub fn add_path(&self, path: &std::path::Path) -> Result<(String, usize), String> {
+        match self.add_path_at_position(path, 1) {
+            Ok(new_path) => Ok((new_path, 1)),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Add a new directory to PATH at a specific position if not already present
+    /// Returns the new PATH string (1-based position)
+    pub fn add_path_at_position(
+        &self,
+        path: &std::path::Path,
+        position: usize,
+    ) -> Result<String, String> {
+        let path_buf = path.to_path_buf();
+
+        // Check if already exists
+        if let Some(_idx) = self.find_path_index(&path_buf) {
+            // Already exists - just return current PATH
+            return Ok(self.to_path_string());
+        }
+
+        // Validate position (1-based)
+        if position == 0 {
+            return Err("Position must be >= 1".to_string());
+        }
+
+        let mut new_dirs = self.dirs.clone();
+
+        // Convert to 0-based index, but cap at the end of the list
+        let insert_idx = (position - 1).min(new_dirs.len());
+
+        new_dirs.insert(insert_idx, path_buf);
+
+        let new_path = new_dirs
+            .iter()
+            .map(|d| d.display().to_string())
+            .collect::<Vec<_>>()
+            .join(":");
+
+        Ok(new_path)
+    }
+
+    /// Find the index of an exact path match (1-based)
+    pub fn find_path_index(&self, path: &std::path::Path) -> Option<usize> {
+        use std::fs;
+
+        // Try to canonicalize the search path if it exists
+        let canonical_search = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+
+        for (idx, dir) in self.dirs.iter().enumerate() {
+            // Compare both as-is and canonicalized
+            if dir == path || dir == &canonical_search {
+                return Some(idx + 1); // Return 1-based index
+            }
+
+            // Also try canonicalizing the dir in PATH
+            if let Ok(canonical_dir) = fs::canonicalize(dir) {
+                if canonical_dir == canonical_search {
+                    return Some(idx + 1);
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Find all indices matching a fuzzy pattern
+    pub fn find_fuzzy_indices(
+        &self,
+        pattern: &str,
+        executable_name: Option<&str>,
+    ) -> Vec<(usize, &PathBuf)> {
+        use crate::path_resolver::FuzzyMatcher;
+
+        let matcher = FuzzyMatcher::new(pattern);
+        let mut matches = Vec::new();
+
+        for (idx, dir) in self.dirs.iter().enumerate() {
+            if matcher.matches(dir) {
+                // If executable specified, check it exists
+                if let Some(name) = executable_name {
+                    let exec_path = dir.join(name);
+                    if !exec_path.exists() {
+                        continue;
+                    }
+                }
+
+                matches.push((idx + 1, dir)); // 1-based index
+            }
+        }
+
+        // Sort by match quality (shorter paths first)
+        matches.sort_by_key(|(_, path)| path.as_os_str().len());
+
+        matches
+    }
+
+    /// Delete a PATH entry by exact path match
+    #[allow(dead_code)]
+    pub fn delete_by_path(&self, path: &std::path::Path) -> Result<String, String> {
+        if let Some(idx) = self.find_path_index(path) {
+            self.delete_entry(idx)
+        } else {
+            Err(format!("Path not found in PATH: {}", path.display()))
+        }
+    }
+
+    /// Check if an executable exists in a directory
+    pub fn has_executable(&self, dir: &std::path::Path, name: &str) -> bool {
+        use crate::executor::ExecutableCheck;
+
+        let exec_path = dir.join(name);
+        exec_path.exists() && ExecutableCheck::new(&exec_path).is_executable()
+    }
+
+    /// Convert current dirs to PATH string
+    pub fn to_path_string(&self) -> String {
+        self.dirs
+            .iter()
+            .map(|d| d.display().to_string())
+            .collect::<Vec<_>>()
+            .join(":")
+    }
 }
 
 #[cfg(test)]

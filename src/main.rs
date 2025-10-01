@@ -11,6 +11,7 @@ mod executor;
 mod output;
 mod path;
 mod path_diff;
+mod path_resolver;
 mod session_tracker;
 mod shell_detect;
 mod shell_integration;
@@ -115,53 +116,8 @@ fn run(args: &Args) -> i32 {
     }
 
     // Handle --delete operation
-    if !args.delete_indices.is_empty() {
-        // Get the paths to be deleted before deletion
-        let dirs = searcher.dirs();
-        let deleted_paths: Vec<String> = args
-            .delete_indices
-            .iter()
-            .filter_map(|&idx| {
-                if idx > 0 && idx <= dirs.len() {
-                    Some(dirs[idx - 1].display().to_string())
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        let result = if args.delete_indices.len() == 1 {
-            searcher.delete_entry(args.delete_indices[0])
-        } else {
-            searcher.delete_entries(&args.delete_indices)
-        };
-
-        match result {
-            Ok(new_path) => {
-                // Log deleted paths to session file
-                if !deleted_paths.is_empty() {
-                    if let Ok(ppid) = system::get_parent_pid() {
-                        if let Err(e) =
-                            session_tracker::write_operation(ppid, "deleted", &deleted_paths)
-                        {
-                            if !args.quiet && !args.silent {
-                                eprintln!("Warning: Failed to log operation: {e}");
-                            }
-                        }
-                    }
-                }
-
-                writeln!(out, "{new_path}").ok();
-                out.flush().ok();
-                return 0;
-            }
-            Err(e) => {
-                if !args.silent {
-                    eprintln!("Error: {e}");
-                }
-                return 2;
-            }
-        }
+    if !args.delete_targets.is_empty() {
+        return handle_delete(&searcher, &args.delete_targets, args, &mut out);
     }
 
     // Handle --move operation
@@ -242,8 +198,8 @@ fn run(args: &Args) -> i32 {
     }
 
     // Handle --prefer operation
-    if let Some((ref name, target_idx)) = args.prefer_target {
-        return handle_prefer(&searcher, name, target_idx, args, &mut out);
+    if let Some(ref target) = args.prefer_target {
+        return handle_prefer(&searcher, target, args, &mut out);
     }
 
     let names = get_names(args);
@@ -438,6 +394,25 @@ fn should_use_color(args: &Args) -> bool {
 
 fn handle_prefer<W: Write>(
     searcher: &PathSearcher,
+    target: &cli::PreferTarget,
+    args: &Args,
+    out: &mut W,
+) -> i32 {
+    use cli::PreferTarget;
+
+    match target {
+        PreferTarget::IndexBased { name, index } => {
+            handle_prefer_index(searcher, name, *index, args, out)
+        }
+        PreferTarget::PathBased { name, path } => {
+            handle_prefer_path(searcher, name, path, args, out)
+        }
+        PreferTarget::PathOnly { path } => handle_prefer_path_only(searcher, path, args, out),
+    }
+}
+
+fn handle_prefer_index<W: Write>(
+    searcher: &PathSearcher,
     name: &str,
     target_idx: usize,
     args: &Args,
@@ -507,6 +482,344 @@ fn handle_prefer<W: Write>(
         Err(e) => {
             if !args.silent {
                 eprintln!("Error: {e}");
+            }
+            2
+        }
+    }
+}
+
+fn handle_prefer_path<W: Write>(
+    searcher: &PathSearcher,
+    name: &str,
+    path_str: &str,
+    args: &Args,
+    out: &mut W,
+) -> i32 {
+    use path_resolver::{looks_like_exact_path, resolve_path};
+
+    let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+
+    // Determine if this is an exact path or fuzzy pattern
+    if looks_like_exact_path(path_str) {
+        // Exact path - resolve it
+        match resolve_path(path_str, &cwd) {
+            Ok(resolved_path) => {
+                handle_prefer_exact_path(searcher, name, &resolved_path, args, out)
+            }
+            Err(e) => {
+                if !args.silent {
+                    eprintln!("Error resolving path: {}", e);
+                }
+                2
+            }
+        }
+    } else {
+        // Fuzzy pattern
+        handle_prefer_fuzzy(searcher, name, path_str, args, out)
+    }
+}
+
+fn handle_prefer_exact_path<W: Write>(
+    searcher: &PathSearcher,
+    name: &str,
+    path: &Path,
+    args: &Args,
+    out: &mut W,
+) -> i32 {
+    // Check if executable exists in the directory
+    if !path.exists() {
+        if !args.silent {
+            eprintln!("Error: Directory does not exist: {}", path.display());
+        }
+        return 2;
+    }
+
+    if !searcher.has_executable(path, name) && !args.silent {
+        eprintln!("Warning: {} not found in {}", name, path.display());
+    }
+    // Continue anyway - might be added later
+
+    // Check if path already exists in PATH
+    if let Some(idx) = searcher.find_path_index(path) {
+        // Path already in PATH - use traditional index-based prefer
+        return handle_prefer_index(searcher, name, idx, args, out);
+    }
+
+    // Path not in PATH - need to add it at the right position
+    // First, find where the executable currently wins (if it exists)
+    let results = search_name(searcher, name, args);
+
+    let insert_position = if !results.is_empty() {
+        // Executable exists - add new path just before the current winner
+        results[0].path_index
+    } else {
+        // Executable doesn't exist anywhere - add at the beginning
+        1
+    };
+
+    // Add the path at the calculated position
+    match searcher.add_path_at_position(path, insert_position) {
+        Ok(new_path) => {
+            if !args.silent {
+                eprintln!(
+                    "Added {} to PATH at index {}",
+                    path.display(),
+                    insert_position
+                );
+            }
+
+            // Log the addition
+            if let Ok(ppid) = system::get_parent_pid() {
+                if let Err(e) = session_tracker::write_operation(
+                    ppid,
+                    "preferred",
+                    &[path.display().to_string()],
+                ) {
+                    if !args.quiet && !args.silent {
+                        eprintln!("Warning: Failed to log operation: {e}");
+                    }
+                }
+            }
+
+            // Output the new PATH
+            writeln!(out, "{}", new_path).ok();
+            out.flush().ok();
+            0
+        }
+        Err(e) => {
+            if !args.silent {
+                eprintln!("Error adding to PATH: {}", e);
+            }
+            2
+        }
+    }
+}
+
+fn handle_prefer_path_only<W: Write>(
+    searcher: &PathSearcher,
+    path_str: &str,
+    args: &Args,
+    out: &mut W,
+) -> i32 {
+    use path_resolver::{looks_like_exact_path, resolve_path};
+
+    let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+
+    // Resolve the path
+    let resolved_path = if looks_like_exact_path(path_str) {
+        match resolve_path(path_str, &cwd) {
+            Ok(path) => path,
+            Err(e) => {
+                if !args.silent {
+                    eprintln!("Error resolving path: {}", e);
+                }
+                return 2;
+            }
+        }
+    } else {
+        // Not a path-like string - treat as relative
+        cwd.join(path_str)
+    };
+
+    // Check if path already exists in PATH
+    if let Some(_idx) = searcher.find_path_index(&resolved_path) {
+        // Already in PATH - do nothing (no duplicate)
+        if !args.silent {
+            eprintln!("{} is already in PATH", resolved_path.display());
+        }
+        // Return current PATH unchanged
+        writeln!(out, "{}", searcher.to_path_string()).ok();
+        out.flush().ok();
+        return 0;
+    }
+
+    // Add to PATH at the beginning
+    match searcher.add_path(&resolved_path) {
+        Ok((new_path, idx)) => {
+            if !args.silent {
+                eprintln!("Added {} to PATH at index {}", resolved_path.display(), idx);
+            }
+
+            // Log the addition
+            if let Ok(ppid) = system::get_parent_pid() {
+                if let Err(e) = session_tracker::write_operation(
+                    ppid,
+                    "added",
+                    &[resolved_path.display().to_string()],
+                ) {
+                    if !args.quiet && !args.silent {
+                        eprintln!("Warning: Failed to log operation: {e}");
+                    }
+                }
+            }
+
+            writeln!(out, "{}", new_path).ok();
+            out.flush().ok();
+            0
+        }
+        Err(e) => {
+            if !args.silent {
+                eprintln!("Error adding to PATH: {}", e);
+            }
+            2
+        }
+    }
+}
+
+fn handle_prefer_fuzzy<W: Write>(
+    searcher: &PathSearcher,
+    name: &str,
+    pattern: &str,
+    args: &Args,
+    out: &mut W,
+) -> i32 {
+    // Find matching paths
+    let matches = searcher.find_fuzzy_indices(pattern, Some(name));
+
+    if matches.is_empty() {
+        if !args.silent {
+            eprintln!(
+                "Error: No PATH entries match pattern '{}' containing '{}'",
+                pattern, name
+            );
+        }
+        return 1;
+    }
+
+    if matches.len() > 1 {
+        if !args.silent {
+            eprintln!("Error: Multiple PATH entries match pattern '{}':", pattern);
+            for (idx, path) in &matches {
+                eprintln!("  [{}] {}", idx, path.display());
+            }
+            eprintln!("Please be more specific or use an index directly.");
+        }
+        return 2;
+    }
+
+    // Single match - use it
+    let (index, _) = matches[0];
+    handle_prefer_index(searcher, name, index, args, out)
+}
+
+fn handle_delete<W: Write>(
+    searcher: &PathSearcher,
+    targets: &[cli::DeleteTarget],
+    args: &Args,
+    out: &mut W,
+) -> i32 {
+    use cli::DeleteTarget;
+    use path_resolver::{looks_like_exact_path, resolve_path};
+
+    let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let mut indices_to_delete = Vec::new();
+
+    for target in targets {
+        match target {
+            DeleteTarget::Index(idx) => {
+                indices_to_delete.push(*idx);
+            }
+
+            DeleteTarget::Path(path_str) => {
+                if looks_like_exact_path(path_str) {
+                    // Exact path - resolve it
+                    match resolve_path(path_str, &cwd) {
+                        Ok(resolved) => {
+                            if let Some(idx) = searcher.find_path_index(&resolved) {
+                                indices_to_delete.push(idx);
+                            } else {
+                                if !args.silent {
+                                    eprintln!(
+                                        "Error: Path not found in PATH: {}",
+                                        resolved.display()
+                                    );
+                                }
+                                return 1;
+                            }
+                        }
+                        Err(e) => {
+                            if !args.silent {
+                                eprintln!("Error resolving path: {}", e);
+                            }
+                            return 2;
+                        }
+                    }
+                } else {
+                    // Fuzzy pattern - delete ALL matches
+                    let matches = searcher.find_fuzzy_indices(path_str, None);
+
+                    if matches.is_empty() {
+                        if !args.silent {
+                            eprintln!("Error: No PATH entries match pattern '{}'", path_str);
+                        }
+                        return 1;
+                    }
+
+                    // Add all matching indices (delete ALL matches)
+                    for (idx, _) in &matches {
+                        indices_to_delete.push(*idx);
+                    }
+
+                    if !args.silent && matches.len() > 1 {
+                        eprintln!(
+                            "Deleting {} PATH entries matching '{}':",
+                            matches.len(),
+                            path_str
+                        );
+                        for (idx, path) in &matches {
+                            eprintln!("  [{}] {}", idx, path.display());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Get the paths to be deleted before deletion (for logging)
+    let dirs = searcher.dirs();
+    let deleted_paths: Vec<String> = indices_to_delete
+        .iter()
+        .filter_map(|&idx| {
+            if idx > 0 && idx <= dirs.len() {
+                Some(dirs[idx - 1].display().to_string())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // Remove duplicates and perform deletion
+    indices_to_delete.sort_unstable();
+    indices_to_delete.dedup();
+
+    let result = if indices_to_delete.len() == 1 {
+        searcher.delete_entry(indices_to_delete[0])
+    } else {
+        searcher.delete_entries(&indices_to_delete)
+    };
+
+    match result {
+        Ok(new_path) => {
+            // Log deleted paths to session file
+            if !deleted_paths.is_empty() {
+                if let Ok(ppid) = system::get_parent_pid() {
+                    if let Err(e) =
+                        session_tracker::write_operation(ppid, "deleted", &deleted_paths)
+                    {
+                        if !args.quiet && !args.silent {
+                            eprintln!("Warning: Failed to log operation: {e}");
+                        }
+                    }
+                }
+            }
+
+            writeln!(out, "{}", new_path).ok();
+            out.flush().ok();
+            0
+        }
+        Err(e) => {
+            if !args.silent {
+                eprintln!("Error: {}", e);
             }
             2
         }

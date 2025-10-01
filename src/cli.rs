@@ -7,6 +7,24 @@ pub enum ColorWhen {
     Always,
 }
 
+#[derive(Debug, Clone)]
+pub enum PreferTarget {
+    /// Traditional index-based preference (backward compatible)
+    IndexBased { name: String, index: usize },
+    /// Path-based preference (new feature)
+    PathBased { name: String, path: String },
+    /// Path-only preference (like fish_add_path)
+    PathOnly { path: String },
+}
+
+#[derive(Debug, Clone)]
+pub enum DeleteTarget {
+    /// Traditional index-based deletion
+    Index(usize),
+    /// Path-based deletion (exact or fuzzy)
+    Path(String),
+}
+
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Debug)]
 pub struct Args {
@@ -25,10 +43,10 @@ pub struct Args {
     pub index: bool,
     pub move_indices: Option<(usize, usize)>,
     pub swap_indices: Option<(usize, usize)>,
-    pub prefer_target: Option<(String, usize)>,
+    pub prefer_target: Option<PreferTarget>,
     pub init_shell: Option<String>,
     pub clean: bool,
-    pub delete_indices: Vec<usize>,
+    pub delete_targets: Vec<DeleteTarget>,
     pub save_shell: Option<Option<String>>, // None = not used, Some(None) = current, Some(Some(x)) = specific
     pub diff_shell: Option<Option<String>>, // None = not used, Some(None) = current, Some(Some(x)) = specific
     pub diff_full: bool,
@@ -65,7 +83,7 @@ impl Args {
             prefer_target: None,
             init_shell: None,
             clean: false,
-            delete_indices: Vec::new(),
+            delete_targets: Vec::new(),
             save_shell: None,
             diff_shell: None,
             diff_full: false,
@@ -184,30 +202,42 @@ impl Args {
             }
 
             if state.expect_prefer_name {
-                prefer_name = Some(arg);
-                state.expect_prefer_name = false;
-                continue;
+                // Check if this looks like a path (not a binary name)
+                if Self::looks_like_path(&arg) {
+                    // Treat as path-only preference
+                    args.prefer_target = Some(PreferTarget::PathOnly { path: arg });
+                    state.expect_prefer_name = false;
+                    continue;
+                } else {
+                    // Traditional NAME TARGET format
+                    prefer_name = Some(arg);
+                    state.expect_prefer_name = false;
+                    continue;
+                }
             }
 
             if let Some(name) = prefer_name {
-                let idx = arg
-                    .parse::<usize>()
-                    .map_err(|_| format!("Invalid prefer index: {arg}"))?;
-                args.prefer_target = Some((name, idx));
+                args.prefer_target = Some(Self::parse_prefer_target(name, &arg)?);
                 prefer_name = None;
                 continue;
             }
 
             if state.expect_delete {
-                // Try to parse as index
-                if let Ok(idx) = arg.parse::<usize>() {
-                    args.delete_indices.push(idx);
-                    continue;
-                } else {
-                    // Not a number, stop expecting delete indices
-                    state.expect_delete = false;
-                    // Fall through to process this arg normally
+                // Parse as delete target (index or path)
+                let target = Self::parse_delete_target(&arg);
+
+                // Check for mixed syntax - not allowed
+                if !args.delete_targets.is_empty() {
+                    let first_is_index = matches!(args.delete_targets[0], DeleteTarget::Index(_));
+                    let current_is_index = matches!(target, DeleteTarget::Index(_));
+
+                    if first_is_index != current_is_index {
+                        return Err("Cannot mix indices and paths in --delete command".to_string());
+                    }
                 }
+
+                args.delete_targets.push(target);
+                continue;
             }
 
             Self::process_arg(&mut args, &arg, &mut state)?;
@@ -226,10 +256,10 @@ impl Args {
             return Err("--swap requires two indices: IDX1 IDX2".to_string());
         }
         if state.expect_prefer_name || prefer_name.is_some() {
-            return Err("--prefer requires NAME and INDEX".to_string());
+            return Err("--prefer requires NAME and TARGET (index or path)".to_string());
         }
-        if state.expect_delete && args.delete_indices.is_empty() {
-            return Err("--delete requires at least one index".to_string());
+        if state.expect_delete && args.delete_targets.is_empty() {
+            return Err("--delete requires at least one target (index or path)".to_string());
         }
 
         Ok(args)
@@ -242,6 +272,42 @@ impl Args {
             "always" => Ok(ColorWhen::Always),
             _ => Err(format!("Invalid color value: {val}")),
         }
+    }
+
+    /// Determines if a string looks like a path
+    fn looks_like_path(s: &str) -> bool {
+        s.contains('/') || s.starts_with('~') || s.starts_with('.') || s.contains('\\')
+    }
+
+    /// Parse the second argument of --prefer to determine if it's an index or path
+    fn parse_prefer_target(name: String, target_str: &str) -> Result<PreferTarget, String> {
+        // First try to parse as index for backward compatibility
+        if let Ok(index) = target_str.parse::<usize>() {
+            // Pure number - treat as index only if it doesn't look like a path
+            if !Self::looks_like_path(target_str) {
+                return Ok(PreferTarget::IndexBased { name, index });
+            }
+        }
+
+        // Otherwise treat as path (exact path or fuzzy pattern)
+        Ok(PreferTarget::PathBased {
+            name,
+            path: target_str.to_string(),
+        })
+    }
+
+    /// Parse delete argument (can be index or path)
+    fn parse_delete_target(target_str: &str) -> DeleteTarget {
+        // Try to parse as index first
+        if let Ok(index) = target_str.parse::<usize>() {
+            // Pure number without path indicators
+            if !Self::looks_like_path(target_str) {
+                return DeleteTarget::Index(index);
+            }
+        }
+
+        // Otherwise treat as path
+        DeleteTarget::Path(target_str.to_string())
     }
 
     fn process_arg(args: &mut Args, arg: &str, state: &mut ParseState) -> Result<(), String> {
@@ -315,15 +381,16 @@ fn print_help() {
 
 USAGE:
     whi [FLAGS] [OPTIONS] <NAME>...
-    whi [FLAGS] [OPTIONS]            # names from stdin
-    whi --move <FROM> <TO>           # reorder PATH
-    whi --swap <IDX1> <IDX2>         # swap PATH entries
-    whi --prefer <NAME> <INDEX>      # prefer executable at INDEX
-    whi --clean                      # remove duplicate PATH entries
-    whi --delete <INDEX>...          # delete PATH entries at indices
-    whi save [SHELL]                 # persist PATH changes
-    whi diff [SHELL]                 # show PATH differences vs saved
-    whi init <SHELL>                 # output shell integration
+    whi [FLAGS] [OPTIONS]                # names from stdin
+    whi --move <FROM> <TO>               # reorder PATH
+    whi --swap <IDX1> <IDX2>             # swap PATH entries
+    whi --prefer <NAME> <TARGET> [...]   # prefer executable (index or path)
+    whi --prefer <PATH>                  # add path to PATH (if not present)
+    whi --clean                          # remove duplicate PATH entries
+    whi --delete <TARGET>...             # delete PATH entries (indices or paths)
+    whi save [SHELL]                     # persist PATH changes
+    whi diff [SHELL]                     # show PATH differences vs saved
+    whi init <SHELL>                     # output shell integration
 
 FLAGS:
     -a, --all              Show all PATH matches (default: only winner)
@@ -343,12 +410,34 @@ PATH MANIPULATION:
         --move <FROM> <TO> Move PATH entry from index FROM to index TO
         --swap <IDX1> <IDX2>
                            Swap PATH entries at indices IDX1 and IDX2
-        --prefer <NAME> <INDEX>
-                           Make executable NAME at INDEX win by moving it
+        --prefer <NAME> <TARGET> [ARGS...]
+                           Make executable NAME at TARGET win by moving it
                            just before the current winner (minimal change)
+
+                           TARGET can be:
+                           - Index: 3
+                           - Full path: /Users/me/.cargo/bin
+                           - Relative path: ./target/release
+                           - Tilde path: ~/.cargo/bin
+                           - Fuzzy pattern: github release (multiple args)
+
+                           If path doesn't exist in PATH, it will be added
+                           at the position where it would win.
+
+        --prefer <PATH>    Add PATH to PATH environment (if not present)
+                           Acts like fish_add_path - no duplicates
+
     -c, --clean            Remove duplicate PATH entries (keeps first occurrence)
-    -d, --delete <INDEX>...
-                           Delete PATH entries at one or more indices
+    -d, --delete <TARGET>...
+                           Delete PATH entries (no mixed indices and paths)
+
+                           TARGET can be:
+                           - Index: 3
+                           - Full path: ~/.local/bin
+                           - Fuzzy pattern: 'temp bin'
+
+                           Fuzzy patterns delete ALL matching entries.
+                           Cannot mix indices and paths in one command.
 
 OPTIONS:
         --path <PATH>      Override environment PATH string
@@ -380,14 +469,45 @@ SHELL INTEGRATION:
         fish:     whi init fish | source
 
     Provides shell commands to manipulate PATH in current shell:
-        whim 10 1      # Move PATH entry 10 to position 1
-        whis 10 41     # Swap PATH entries 10 and 41
-        whip cargo 50  # Make cargo at index 50 the winner
-        whic           # Clean duplicate PATH entries
-        whid 4         # Delete PATH entry at index 4
-        whid 5 16 7    # Delete PATH entries at indices 5, 16, and 7
-        whia cargo     # Show all cargo matches with indices (whi -ia)
-        whii           # Show all PATH entries with indices (whi -i)
+        whim 10 1                  # Move PATH entry 10 to position 1
+        whis 10 41                 # Swap PATH entries 10 and 41
+        whip cargo 50              # Make cargo at index 50 the winner
+        whip cargo ~/.cargo/bin    # Add/prefer cargo from ~/.cargo/bin
+        whip bat github release    # Prefer bat from path matching pattern
+        whic                       # Clean duplicate PATH entries
+        whid 4                     # Delete PATH entry at index 4
+        whid 5 16 7                # Delete PATH entries at indices 5, 16, and 7
+        whid ~/.local/bin          # Delete ~/.local/bin from PATH
+        whid temp bin              # Delete ALL entries matching pattern
+        whia cargo                 # Show all cargo matches with indices (whi -ia)
+        whii                       # Show all PATH entries with indices (whi -i)
+
+EXAMPLES:
+    # Traditional index-based operations
+    whi --prefer cargo 3           # Prefer cargo from PATH index 3
+    whi --delete 5                 # Delete PATH entry at index 5
+
+    # Path-based operations with binary
+    whi --prefer cargo ~/.cargo/bin          # Add ~/.cargo/bin and prefer it
+    whi --prefer bat /usr/local/bin          # Prefer bat from /usr/local/bin
+    whi --prefer rustc ./target/release      # Prefer rustc from relative path
+
+    # Path-only operations (like fish_add_path)
+    whi --prefer ~/.local/bin                # Add path to PATH if not present
+    whi --prefer ./target/release            # Add relative path if not present
+
+    # Delete operations
+    whi --delete /opt/homebrew/bin           # Delete exact path from PATH
+    whi --delete old temp                    # Delete ALL paths matching 'old' and 'temp'
+
+    # Fuzzy matching (no quotes needed)
+    whi --prefer bat github release          # Find path containing 'github' and 'release'
+
+    # Fuzzy matching is case-insensitive and order matters:
+    'cargo bin' matches: /Users/me/.cargo/bin ✓
+                        /Users/me/.cargo/tools/bin ✓
+                        /usr/bin/cargo ✗ (wrong order)
+                        /usr/local/bin ✗ (missing 'cargo')
 
 EXIT CODES:
     0  All names found
