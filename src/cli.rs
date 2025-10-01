@@ -12,7 +12,7 @@ pub enum PreferTarget {
     IndexBased { name: String, index: usize },
     /// Path-based preference (new feature)
     PathBased { name: String, path: String },
-    /// Path-only preference (like fish_add_path)
+    /// Path-only preference (like `fish_add_path`)
     PathOnly { path: String },
 }
 
@@ -25,7 +25,7 @@ pub enum DeleteTarget {
 }
 
 #[allow(clippy::struct_excessive_bools)]
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Args {
     pub names: Vec<String>,
     pub all: bool,
@@ -45,11 +45,16 @@ pub struct Args {
     pub prefer_target: Option<PreferTarget>,
     pub clean: bool,
     pub delete_targets: Vec<DeleteTarget>,
-    pub save_shell: Option<Option<String>>, // None = not used, Some(None) = current, Some(Some(x)) = specific
-    pub diff_shell: Option<Option<String>>, // None = not used, Some(None) = current, Some(Some(x)) = specific
+    pub apply_shell: Option<Option<String>>, // None = not used, Some(None) = current, Some(Some(x)) = specific
+    pub diff: bool,
     pub diff_full: bool,
     pub init_shell: Option<String>,
-    pub requires_integration: bool,
+    pub reset: bool,
+    pub undo_count: Option<usize>, // None = not used, Some(n) = undo n operations
+    pub redo_count: Option<usize>, // None = not used, Some(n) = redo n operations
+    pub save_profile: Option<String>,
+    pub load_profile: Option<String>,
+    pub remove_profile: Option<String>,
 }
 
 impl Args {

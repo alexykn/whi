@@ -7,14 +7,17 @@ pub struct ExecutableCheck<'a> {
 }
 
 impl<'a> ExecutableCheck<'a> {
+    #[must_use]
     pub fn new(path: &'a Path) -> Self {
         ExecutableCheck { path }
     }
 
+    #[must_use]
     pub fn exists(&self) -> bool {
         self.path.exists()
     }
 
+    #[must_use]
     pub fn is_executable(&self) -> bool {
         // Check if it's a regular file or symlink to one
         let Ok(metadata) = fs::metadata(self.path) else {
@@ -31,6 +34,7 @@ impl<'a> ExecutableCheck<'a> {
         (mode & 0o111) != 0
     }
 
+    #[must_use]
     pub fn get_file_metadata(&self) -> Option<FileMetadata> {
         let metadata = fs::metadata(self.path).ok()?;
 

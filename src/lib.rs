@@ -1,3 +1,6 @@
+#![allow(clippy::missing_errors_doc)]
+#![allow(clippy::missing_panics_doc)]
+
 pub mod app;
 pub mod atomic_file;
 pub mod cli;

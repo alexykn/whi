@@ -10,6 +10,7 @@ pub enum Shell {
 }
 
 impl Shell {
+    #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
             Shell::Bash => "bash",
@@ -101,7 +102,7 @@ pub fn get_config_file_path(shell: &Shell) -> Result<PathBuf, String> {
     }
 }
 
-/// Get the path to the saved PATH file for a given shell
+/// Get the path to the saved `PATH` file for a given shell
 pub fn get_saved_path_file(shell: &Shell) -> Result<PathBuf, String> {
     let home = env::var("HOME").map_err(|_| "HOME environment variable not set".to_string())?;
     let whi_dir = PathBuf::from(home).join(".whi");
@@ -115,16 +116,12 @@ pub fn get_sourcing_line(shell: &Shell) -> Result<String, String> {
     let saved_path_str = saved_path_file.display().to_string();
 
     match shell {
-        Shell::Bash | Shell::Zsh => {
-            Ok(format!(
-                "# whi: Load saved PATH\n[ -f {saved_path_str} ] && export PATH=\"$(cat {saved_path_str})\"\n"
-            ))
-        }
-        Shell::Fish => {
-            Ok(format!(
-                "# whi: Load saved PATH\nif test -f {saved_path_str}\n    set -gx PATH (cat {saved_path_str} | string split :)\nend\n"
-            ))
-        }
+        Shell::Bash | Shell::Zsh => Ok(format!(
+            "# whi: Load saved PATH\n[ -f {saved_path_str} ] && export PATH=\"$(cat {saved_path_str})\"\n"
+        )),
+        Shell::Fish => Ok(format!(
+            "# whi: Load saved PATH\nif test -f {saved_path_str}\n    set -gx PATH (cat {saved_path_str} | string split :)\nend\n"
+        )),
     }
 }
 

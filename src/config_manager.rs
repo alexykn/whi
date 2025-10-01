@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::atomic_file::AtomicFile;
 use crate::shell_detect::{get_config_file_path, get_saved_path_file, get_sourcing_line, Shell};
 
-/// Save the current PATH for a shell
+/// Save the current `PATH` for a shell
 pub fn save_path(shell: &Shell, path: &str) -> Result<(), String> {
     let saved_path_file = get_saved_path_file(shell)?;
 
@@ -45,25 +45,9 @@ pub fn save_path(shell: &Shell, path: &str) -> Result<(), String> {
         .commit()
         .map_err(|e| format!("Failed to commit PATH file: {e}"))?;
 
-    // Ensure whi integration exists in config file
-    ensure_whi_integration(shell)?;
+    // Note: We don't auto-add to config files anymore since whi init now includes saved PATH loading
 
     Ok(())
-}
-
-/// Load saved PATH for a shell
-pub fn load_saved_path(shell: &Shell) -> Result<String, String> {
-    let saved_path_file = get_saved_path_file(shell)?;
-
-    if !saved_path_file.exists() {
-        return Err(format!(
-            "No saved PATH for {}. Run 'whi save {}' first.",
-            shell.as_str(),
-            shell.as_str()
-        ));
-    }
-
-    fs::read_to_string(&saved_path_file).map_err(|e| format!("Failed to read saved PATH file: {e}"))
 }
 
 /// Ensure the whi integration line exists in the shell config file
@@ -130,6 +114,118 @@ fn backup_config_file(path: &Path) -> Result<(), String> {
     fs::copy(path, &backup_path).map_err(|e| format!("Failed to create backup: {e}"))?;
 
     Ok(())
+}
+
+fn get_profiles_dir() -> Result<std::path::PathBuf, String> {
+    let home = std::env::var("HOME").map_err(|_| "HOME environment variable not set")?;
+    let profiles_dir = std::path::PathBuf::from(home).join(".whi").join("profiles");
+
+    if !profiles_dir.exists() {
+        fs::create_dir_all(&profiles_dir)
+            .map_err(|e| format!("Failed to create profiles directory: {e}"))?;
+    }
+
+    Ok(profiles_dir)
+}
+
+pub fn save_profile(profile_name: &str, path: &str) -> Result<(), String> {
+    if profile_name.is_empty() {
+        return Err("Profile name cannot be empty".to_string());
+    }
+
+    if profile_name.contains('/') || profile_name.contains('\\') || profile_name.starts_with('.') {
+        return Err(
+            "Invalid profile name (cannot contain path separators or start with '.')".to_string(),
+        );
+    }
+
+    let profiles_dir = get_profiles_dir()?;
+    let profile_file = profiles_dir.join(profile_name);
+
+    let mut atomic_file = AtomicFile::new(&profile_file)
+        .map_err(|e| format!("Failed to create profile file: {e}"))?;
+
+    atomic_file
+        .write_all(path.as_bytes())
+        .map_err(|e| format!("Failed to write profile: {e}"))?;
+
+    atomic_file
+        .commit()
+        .map_err(|e| format!("Failed to commit profile file: {e}"))?;
+
+    Ok(())
+}
+
+pub fn load_profile(profile_name: &str) -> Result<String, String> {
+    if profile_name.is_empty() {
+        return Err("Profile name cannot be empty".to_string());
+    }
+
+    if profile_name.contains('/') || profile_name.contains('\\') || profile_name.starts_with('.') {
+        return Err(
+            "Invalid profile name (cannot contain path separators or start with '.')".to_string(),
+        );
+    }
+
+    let profiles_dir = get_profiles_dir()?;
+    let profile_file = profiles_dir.join(profile_name);
+
+    if !profile_file.exists() {
+        return Err(format!("Profile '{profile_name}' not found"));
+    }
+
+    fs::read_to_string(&profile_file).map_err(|e| format!("Failed to read profile file: {e}"))
+}
+
+pub fn delete_profile(profile_name: &str) -> Result<(), String> {
+    if profile_name.is_empty() {
+        return Err("Profile name cannot be empty".to_string());
+    }
+
+    if profile_name.contains('/') || profile_name.contains('\\') || profile_name.starts_with('.') {
+        return Err(
+            "Invalid profile name (cannot contain path separators or start with '.')".to_string(),
+        );
+    }
+
+    let profiles_dir = get_profiles_dir()?;
+    let profile_file = profiles_dir.join(profile_name);
+
+    if !profile_file.exists() {
+        return Err(format!("Profile '{profile_name}' not found"));
+    }
+
+    fs::remove_file(&profile_file).map_err(|e| format!("Failed to delete profile: {e}"))?;
+
+    Ok(())
+}
+
+pub fn list_profiles() -> Result<Vec<String>, String> {
+    let profiles_dir = get_profiles_dir()?;
+
+    if !profiles_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let entries = fs::read_dir(&profiles_dir)
+        .map_err(|e| format!("Failed to read profiles directory: {e}"))?;
+
+    let mut profiles = Vec::new();
+
+    for entry in entries.flatten() {
+        if let Ok(file_type) = entry.file_type() {
+            if file_type.is_file() {
+                if let Some(name) = entry.file_name().to_str() {
+                    if !name.starts_with('.') {
+                        profiles.push(name.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    profiles.sort();
+    Ok(profiles)
 }
 
 #[cfg(test)]

@@ -12,7 +12,22 @@ use crate::session_tracker;
 use crate::shell_integration;
 use crate::system;
 
+/// Get the session `PID` - either from `WHI_SESSION_PID` env var or fall back to parent `PID`
+fn get_session_pid() -> Result<u32, std::io::Error> {
+    if let Ok(pid_str) = env::var("WHI_SESSION_PID") {
+        pid_str.parse::<u32>().map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Invalid WHI_SESSION_PID value",
+            )
+        })
+    } else {
+        system::get_parent_pid()
+    }
+}
+
 #[allow(clippy::too_many_lines)]
+#[must_use]
 pub fn run(args: &Args) -> i32 {
     // Handle init subcommand
     if let Some(ref shell) = args.init_shell {
@@ -28,14 +43,44 @@ pub fn run(args: &Args) -> i32 {
         }
     }
 
-    // Handle save subcommand
-    if let Some(shell_opt) = &args.save_shell {
-        return handle_save(shell_opt);
+    // Handle apply subcommand (renamed from save)
+    if let Some(shell_opt) = &args.apply_shell {
+        return handle_apply(shell_opt.as_ref());
+    }
+
+    // Handle save profile subcommand
+    if let Some(profile_name) = &args.save_profile {
+        return handle_save_profile(profile_name);
+    }
+
+    // Handle load profile subcommand
+    if let Some(profile_name) = &args.load_profile {
+        return handle_load_profile(profile_name);
+    }
+
+    // Handle remove profile subcommand
+    if let Some(profile_name) = &args.remove_profile {
+        return handle_remove_profile(profile_name);
+    }
+
+    // Handle reset subcommand
+    if args.reset {
+        return handle_reset();
+    }
+
+    // Handle undo subcommand
+    if let Some(count) = args.undo_count {
+        return handle_undo(count);
+    }
+
+    // Handle redo subcommand
+    if let Some(count) = args.redo_count {
+        return handle_redo(count);
     }
 
     // Handle diff subcommand
-    if let Some(shell_opt) = &args.diff_shell {
-        return handle_diff(shell_opt, args.diff_full);
+    if args.diff {
+        return handle_diff(args.diff_full);
     }
 
     let path_var = match &args.path_override {
@@ -49,32 +94,13 @@ pub fn run(args: &Args) -> i32 {
 
     // Handle --clean operation
     if args.clean {
-        let (new_path, removed_indices) = searcher.clean_duplicates();
+        let (new_path, _removed_indices) = searcher.clean_duplicates();
 
-        // Log deleted duplicates to session file
-        if !removed_indices.is_empty() {
-            // Get the actual paths that were removed
-            let dirs = searcher.dirs();
-            let removed_paths: Vec<String> = removed_indices
-                .iter()
-                .filter_map(|&idx| {
-                    if idx > 0 && idx <= dirs.len() {
-                        Some(dirs[idx - 1].display().to_string())
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-
-            if !removed_paths.is_empty() {
-                if let Ok(ppid) = system::get_parent_pid() {
-                    if let Err(e) =
-                        session_tracker::write_operation(ppid, "deleted", &removed_paths)
-                    {
-                        if !args.quiet && !args.silent {
-                            eprintln!("Warning: Failed to log operation: {e}");
-                        }
-                    }
+        // Write snapshot of new state
+        if let Ok(ppid) = get_session_pid() {
+            if let Err(e) = session_tracker::write_path_snapshot(ppid, &new_path) {
+                if !args.quiet && !args.silent {
+                    eprintln!("Warning: Failed to write snapshot: {e}");
                 }
             }
         }
@@ -91,23 +117,12 @@ pub fn run(args: &Args) -> i32 {
 
     // Handle --move operation
     if let Some((from, to)) = args.move_indices {
-        // Get the path being moved
-        let dirs = searcher.dirs();
-        let moved_path = if from > 0 && from <= dirs.len() {
-            Some(dirs[from - 1].display().to_string())
-        } else {
-            None
-        };
-
         match searcher.move_entry(from, to) {
             Ok(new_path) => {
-                // Log moved path to session file
-                if let Some(path) = moved_path {
-                    if let Ok(ppid) = system::get_parent_pid() {
-                        if let Err(e) = session_tracker::write_operation(ppid, "moved", &[path]) {
-                            if !args.quiet && !args.silent {
-                                eprintln!("Warning: Failed to log operation: {e}");
-                            }
+                if let Ok(ppid) = get_session_pid() {
+                    if let Err(e) = session_tracker::write_path_snapshot(ppid, &new_path) {
+                        if !args.quiet && !args.silent {
+                            eprintln!("Warning: Failed to write snapshot: {e}");
                         }
                     }
                 }
@@ -127,28 +142,12 @@ pub fn run(args: &Args) -> i32 {
 
     // Handle --swap operation
     if let Some((idx1, idx2)) = args.swap_indices {
-        // Get the paths being swapped
-        let dirs = searcher.dirs();
-        let mut swapped_paths = Vec::new();
-
-        if idx1 > 0 && idx1 <= dirs.len() {
-            swapped_paths.push(dirs[idx1 - 1].display().to_string());
-        }
-        if idx2 > 0 && idx2 <= dirs.len() {
-            swapped_paths.push(dirs[idx2 - 1].display().to_string());
-        }
-
         match searcher.swap_entries(idx1, idx2) {
             Ok(new_path) => {
-                // Log swapped paths to session file
-                if !swapped_paths.is_empty() {
-                    if let Ok(ppid) = system::get_parent_pid() {
-                        if let Err(e) =
-                            session_tracker::write_operation(ppid, "swapped", &swapped_paths)
-                        {
-                            if !args.quiet && !args.silent {
-                                eprintln!("Warning: Failed to log operation: {e}");
-                            }
+                if let Ok(ppid) = get_session_pid() {
+                    if let Err(e) = session_tracker::write_path_snapshot(ppid, &new_path) {
+                        if !args.quiet && !args.silent {
+                            eprintln!("Warning: Failed to write snapshot: {e}");
                         }
                     }
                 }
@@ -184,10 +183,10 @@ pub fn run(args: &Args) -> i32 {
         }
 
         for (idx, dir) in searcher.dirs().iter().enumerate() {
-            if !args.no_index {
-                writeln!(out, "{:>4} {}", format!("[{}]", idx + 1), dir.display()).ok();
-            } else {
+            if args.no_index {
                 writeln!(out, "{}", dir.display()).ok();
+            } else {
+                writeln!(out, "{:>4} {}", format!("[{}]", idx + 1), dir.display()).ok();
             }
         }
         out.flush().ok();
@@ -314,11 +313,17 @@ fn search_name(searcher: &PathSearcher, name: &str, args: &Args) -> Vec<SearchRe
     }
 
     let mut results = Vec::new();
+    let search_all = args.all || args.full;
 
     for (idx, dir) in searcher.dirs().iter().enumerate() {
         let candidate = dir.join(name);
         if let Some(result) = check_path(&candidate, args, idx + 1) {
             results.push(result);
+
+            // Stop after first match if not searching for all (like `which`)
+            if !search_all {
+                break;
+            }
         }
     }
 
@@ -370,7 +375,7 @@ fn should_use_color(args: &Args) -> bool {
 fn get_current_exe_dir() -> Option<PathBuf> {
     env::current_exe()
         .ok()
-        .and_then(|exe_path| exe_path.parent().map(|p| p.to_path_buf()))
+        .and_then(|exe_path| exe_path.parent().map(std::path::Path::to_path_buf))
 }
 
 fn handle_prefer<W: Write>(
@@ -399,8 +404,10 @@ fn handle_prefer_index<W: Write>(
     args: &Args,
     out: &mut W,
 ) -> i32 {
-    // Search for all occurrences of the executable
-    let results = search_name(searcher, name, args);
+    // Need to search ALL occurrences for prefer logic to work
+    let mut search_args = args.clone();
+    search_args.all = true;
+    let results = search_name(searcher, name, &search_args);
 
     if results.is_empty() {
         if !args.silent {
@@ -434,24 +441,12 @@ fn handle_prefer_index<W: Write>(
         return 2;
     };
 
-    // Get the path being moved (before the move)
-    let dirs = searcher.dirs();
-    let preferred_path = if target_idx > 0 && target_idx <= dirs.len() {
-        Some(dirs[target_idx - 1].display().to_string())
-    } else {
-        None
-    };
-
-    // Perform the move
     match searcher.move_entry(target_idx, new_position) {
         Ok(new_path) => {
-            // Log preferred path to session file
-            if let Some(path) = preferred_path {
-                if let Ok(ppid) = system::get_parent_pid() {
-                    if let Err(e) = session_tracker::write_operation(ppid, "preferred", &[path]) {
-                        if !args.quiet && !args.silent {
-                            eprintln!("Warning: Failed to log operation: {e}");
-                        }
+            if let Ok(ppid) = get_session_pid() {
+                if let Err(e) = session_tracker::write_path_snapshot(ppid, &new_path) {
+                    if !args.quiet && !args.silent {
+                        eprintln!("Warning: Failed to write snapshot: {e}");
                     }
                 }
             }
@@ -489,7 +484,7 @@ fn handle_prefer_path<W: Write>(
             }
             Err(e) => {
                 if !args.silent {
-                    eprintln!("Error resolving path: {}", e);
+                    eprintln!("Error resolving path: {e}");
                 }
                 2
             }
@@ -515,30 +510,32 @@ fn handle_prefer_exact_path<W: Write>(
         return 2;
     }
 
-    if !searcher.has_executable(path, name) && !args.silent {
-        eprintln!("Warning: {} not found in {}", name, path.display());
-    }
-    // Continue anyway - might be added later
-
     // Check if path already exists in PATH
     if let Some(idx) = searcher.find_path_index(path) {
         // Path already in PATH - use traditional index-based prefer
         return handle_prefer_index(searcher, name, idx, args, out);
     }
 
+    // Path not in PATH yet - verify executable exists before adding
+    if !searcher.has_executable(path, name) {
+        if !args.silent {
+            eprintln!("Error: {} not found in {}", name, path.display());
+        }
+        return 2;
+    }
+
     // Path not in PATH - need to add it at the right position
     // First, find where the executable currently wins (if it exists)
     let results = search_name(searcher, name, args);
 
-    let insert_position = if !results.is_empty() {
-        // Executable exists - add new path just before the current winner
-        results[0].path_index
-    } else {
+    let insert_position = if results.is_empty() {
         // Executable doesn't exist anywhere - add at the beginning
         1
+    } else {
+        // Executable exists - add new path just before the current winner
+        results[0].path_index
     };
 
-    // Add the path at the calculated position
     match searcher.add_path_at_position(path, insert_position) {
         Ok(new_path) => {
             if !args.silent {
@@ -549,27 +546,21 @@ fn handle_prefer_exact_path<W: Write>(
                 );
             }
 
-            // Log the addition
-            if let Ok(ppid) = system::get_parent_pid() {
-                if let Err(e) = session_tracker::write_operation(
-                    ppid,
-                    "preferred",
-                    &[path.display().to_string()],
-                ) {
+            if let Ok(ppid) = get_session_pid() {
+                if let Err(e) = session_tracker::write_path_snapshot(ppid, &new_path) {
                     if !args.quiet && !args.silent {
-                        eprintln!("Warning: Failed to log operation: {e}");
+                        eprintln!("Warning: Failed to write snapshot: {e}");
                     }
                 }
             }
 
-            // Output the new PATH
-            writeln!(out, "{}", new_path).ok();
+            writeln!(out, "{new_path}").ok();
             out.flush().ok();
             0
         }
         Err(e) => {
             if !args.silent {
-                eprintln!("Error adding to PATH: {}", e);
+                eprintln!("Error adding to PATH: {e}");
             }
             2
         }
@@ -592,7 +583,7 @@ fn handle_prefer_path_only<W: Write>(
             Ok(path) => path,
             Err(e) => {
                 if !args.silent {
-                    eprintln!("Error resolving path: {}", e);
+                    eprintln!("Error resolving path: {e}");
                 }
                 return 2;
             }
@@ -614,33 +605,27 @@ fn handle_prefer_path_only<W: Write>(
         return 0;
     }
 
-    // Add to PATH at the beginning
     match searcher.add_path(&resolved_path) {
         Ok((new_path, idx)) => {
             if !args.silent {
                 eprintln!("Added {} to PATH at index {}", resolved_path.display(), idx);
             }
 
-            // Log the addition
-            if let Ok(ppid) = system::get_parent_pid() {
-                if let Err(e) = session_tracker::write_operation(
-                    ppid,
-                    "added",
-                    &[resolved_path.display().to_string()],
-                ) {
+            if let Ok(ppid) = get_session_pid() {
+                if let Err(e) = session_tracker::write_path_snapshot(ppid, &new_path) {
                     if !args.quiet && !args.silent {
-                        eprintln!("Warning: Failed to log operation: {e}");
+                        eprintln!("Warning: Failed to write snapshot: {e}");
                     }
                 }
             }
 
-            writeln!(out, "{}", new_path).ok();
+            writeln!(out, "{new_path}").ok();
             out.flush().ok();
             0
         }
         Err(e) => {
             if !args.silent {
-                eprintln!("Error adding to PATH: {}", e);
+                eprintln!("Error adding to PATH: {e}");
             }
             2
         }
@@ -659,17 +644,14 @@ fn handle_prefer_fuzzy<W: Write>(
 
     if matches.is_empty() {
         if !args.silent {
-            eprintln!(
-                "Error: No PATH entries match pattern '{}' containing '{}'",
-                pattern, name
-            );
+            eprintln!("Error: No PATH entries match pattern '{pattern}' containing '{name}'");
         }
         return 1;
     }
 
     if matches.len() > 1 {
         if !args.silent {
-            eprintln!("Error: Multiple PATH entries match pattern '{}':", pattern);
+            eprintln!("Error: Multiple PATH entries match pattern '{pattern}':");
             for (idx, path) in &matches {
                 eprintln!("  [{}] {}", idx, path.display());
             }
@@ -720,7 +702,7 @@ fn handle_delete<W: Write>(
                         }
                         Err(e) => {
                             if !args.silent {
-                                eprintln!("Error resolving path: {}", e);
+                                eprintln!("Error resolving path: {e}");
                             }
                             return 2;
                         }
@@ -731,7 +713,7 @@ fn handle_delete<W: Write>(
 
                     if matches.is_empty() {
                         if !args.silent {
-                            eprintln!("Error: No PATH entries match pattern '{}'", path_str);
+                            eprintln!("Error: No PATH entries match pattern '{path_str}'");
                         }
                         return 1;
                     }
@@ -783,17 +765,6 @@ fn handle_delete<W: Write>(
         }
     }
 
-    let deleted_paths: Vec<String> = indices_to_delete
-        .iter()
-        .filter_map(|&idx| {
-            if idx > 0 && idx <= dirs.len() {
-                Some(dirs[idx - 1].display().to_string())
-            } else {
-                None
-            }
-        })
-        .collect();
-
     let result = if indices_to_delete.len() == 1 {
         searcher.delete_entry(indices_to_delete[0])
     } else {
@@ -802,33 +773,28 @@ fn handle_delete<W: Write>(
 
     match result {
         Ok(new_path) => {
-            // Log deleted paths to session file
-            if !deleted_paths.is_empty() {
-                if let Ok(ppid) = system::get_parent_pid() {
-                    if let Err(e) =
-                        session_tracker::write_operation(ppid, "deleted", &deleted_paths)
-                    {
-                        if !args.quiet && !args.silent {
-                            eprintln!("Warning: Failed to log operation: {e}");
-                        }
+            if let Ok(ppid) = get_session_pid() {
+                if let Err(e) = session_tracker::write_path_snapshot(ppid, &new_path) {
+                    if !args.quiet && !args.silent {
+                        eprintln!("Warning: Failed to write snapshot: {e}");
                     }
                 }
             }
 
-            writeln!(out, "{}", new_path).ok();
+            writeln!(out, "{new_path}").ok();
             out.flush().ok();
             0
         }
         Err(e) => {
             if !args.silent {
-                eprintln!("Error: {}", e);
+                eprintln!("Error: {e}");
             }
             2
         }
     }
 }
 
-fn handle_save(shell_opt: &Option<String>) -> i32 {
+fn handle_apply(shell_opt: Option<&String>) -> i32 {
     use crate::config_manager::save_path;
     use crate::session_tracker::{cleanup_old_sessions, clear_session};
     use crate::shell_detect::{detect_current_shell, Shell};
@@ -837,7 +803,6 @@ fn handle_save(shell_opt: &Option<String>) -> i32 {
 
     let result = match shell_opt {
         None => {
-            // Auto-detect current shell
             let shell = match detect_current_shell() {
                 Ok(s) => s,
                 Err(e) => {
@@ -852,22 +817,29 @@ fn handle_save(shell_opt: &Option<String>) -> i32 {
             }
 
             let num_entries = path_var.split(':').filter(|s| !s.is_empty()).count();
-            println!("Saved PATH to {} ({} entries)", shell.as_str(), num_entries);
+            println!(
+                "Applied PATH to {} ({} entries)",
+                shell.as_str(),
+                num_entries
+            );
             0
         }
         Some(shell_str) => {
             if shell_str.to_lowercase() == "all" {
-                // Save to all three shells
                 let shells = [Shell::Bash, Shell::Zsh, Shell::Fish];
                 let mut all_ok = true;
 
                 for shell in &shells {
                     if let Err(e) = save_path(shell, &path_var) {
-                        eprintln!("Error saving to {}: {e}", shell.as_str());
+                        eprintln!("Error applying to {}: {e}", shell.as_str());
                         all_ok = false;
                     } else {
                         let num_entries = path_var.split(':').filter(|s| !s.is_empty()).count();
-                        println!("Saved PATH to {} ({} entries)", shell.as_str(), num_entries);
+                        println!(
+                            "Applied PATH to {} ({} entries)",
+                            shell.as_str(),
+                            num_entries
+                        );
                     }
                 }
 
@@ -877,7 +849,6 @@ fn handle_save(shell_opt: &Option<String>) -> i32 {
                     2
                 }
             } else {
-                // Save to specific shell
                 let shell = match shell_str.parse::<Shell>() {
                     Ok(s) => s,
                     Err(e) => {
@@ -892,89 +863,328 @@ fn handle_save(shell_opt: &Option<String>) -> i32 {
                 }
 
                 let num_entries = path_var.split(':').filter(|s| !s.is_empty()).count();
-                println!("Saved PATH to {} ({} entries)", shell.as_str(), num_entries);
+                println!(
+                    "Applied PATH to {} ({} entries)",
+                    shell.as_str(),
+                    num_entries
+                );
                 0
             }
         }
     };
 
-    // After successful save, clear session log and cleanup old sessions
     if result == 0 {
-        if let Ok(ppid) = system::get_parent_pid() {
+        if let Ok(ppid) = get_session_pid() {
+            // Clear old session and reinitialize with current PATH as new baseline
             if let Err(e) = clear_session(ppid) {
-                eprintln!("Warning: Failed to clear session log: {}", e);
+                eprintln!("Warning: Failed to clear session log: {e}");
+            }
+
+            // Reinitialize session with current PATH as baseline
+            if let Err(e) = session_tracker::write_path_snapshot(ppid, &path_var) {
+                eprintln!("Warning: Failed to reinitialize session: {e}");
             }
         }
 
-        match cleanup_old_sessions() {
-            Ok(count) if count > 0 => {
-                eprintln!("Cleaned up {} old session file(s)", count);
-            }
-            Err(e) => {
-                eprintln!("Warning: Failed to cleanup old sessions: {}", e);
-            }
-            _ => {}
-        }
+        // Silently cleanup old sessions (users don't need to know about this)
+        let _ = cleanup_old_sessions();
     }
 
     result
 }
 
-fn handle_diff(shell_opt: &Option<String>, full: bool) -> i32 {
-    use crate::config_manager::load_saved_path;
-    use crate::path_diff::{compute_diff, format_diff};
-    use crate::session_tracker::read_session_paths;
-    use crate::shell_detect::{detect_current_shell, Shell};
+fn handle_diff(full: bool) -> i32 {
+    use crate::path_diff::{compute_diff, format_diff_with_limit};
+    use crate::session_tracker::get_initial_path;
 
     let current_path = env::var("PATH").unwrap_or_default();
     let use_color = atty::is(atty::Stream::Stdout);
 
-    let shell = match shell_opt {
-        None => {
-            // Auto-detect current shell
-            match detect_current_shell() {
-                Ok(s) => s,
-                Err(e) => {
-                    eprintln!("Error: {e}");
-                    return 2;
-                }
-            }
-        }
-        Some(shell_str) => match shell_str.parse::<Shell>() {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("Error: {e}");
-                return 2;
-            }
-        },
-    };
+    // Get baseline: use initial session PATH, or fall back to current PATH if no session
+    let ppid = get_session_pid().ok();
+    let baseline_path = ppid
+        .and_then(|pid| get_initial_path(pid).ok().flatten())
+        .unwrap_or_else(|| current_path.clone());
 
-    let saved_path = match load_saved_path(&shell) {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("{e}");
-            return 1;
-        }
-    };
-
-    // Get PPID (parent shell PID) to read affected and deleted paths
-    let (affected_paths, deleted_paths) = system::get_parent_pid()
-        .ok()
-        .and_then(|ppid| read_session_paths(ppid).ok())
-        .unwrap_or_else(|| (std::collections::HashSet::new(), Vec::new()));
-
-    let diff = compute_diff(
-        &current_path,
-        &saved_path,
-        &affected_paths,
-        &deleted_paths,
-        full,
-    );
-    let formatted = format_diff(&diff, use_color);
+    // Simply compare current PATH to initial snapshot
+    let diff = compute_diff(&current_path, &baseline_path, full);
+    let formatted = format_diff_with_limit(&diff, use_color, full);
 
     println!("{formatted}");
 
     0
+}
+
+fn handle_reset() -> i32 {
+    use crate::session_tracker::{get_initial_path, truncate_snapshots};
+    use std::io::Write;
+
+    let ppid = match get_session_pid() {
+        Ok(pid) => pid,
+        Err(e) => {
+            eprintln!("Error: {e}");
+            return 2;
+        }
+    };
+
+    match get_initial_path(ppid) {
+        Ok(Some(initial_path)) => {
+            // Truncate to keep only the initial snapshot
+            if let Err(e) = truncate_snapshots(ppid, 1) {
+                eprintln!("Warning: Failed to truncate snapshot history: {e}");
+            }
+
+            let stdout = io::stdout();
+            let mut out = BufWriter::new(stdout.lock());
+            writeln!(out, "{initial_path}").ok();
+            out.flush().ok();
+            0
+        }
+        Ok(None) => {
+            eprintln!(
+                "Error: No initial PATH found. No operations have been performed in this session."
+            );
+            1
+        }
+        Err(e) => {
+            eprintln!("Error: {e}");
+            2
+        }
+    }
+}
+
+fn handle_undo(count: usize) -> i32 {
+    use crate::session_tracker::{get_cursor, read_path_snapshots, set_cursor};
+    use std::io::Write;
+
+    if count == 0 {
+        eprintln!("Error: Count must be at least 1");
+        return 2;
+    }
+
+    let ppid = match get_session_pid() {
+        Ok(pid) => pid,
+        Err(e) => {
+            eprintln!("Error: {e}");
+            return 2;
+        }
+    };
+
+    match read_path_snapshots(ppid) {
+        Ok(snapshots) => {
+            if snapshots.is_empty() {
+                eprintln!("Error: No PATH history found. No operations have been performed in this session.");
+                return 1;
+            }
+
+            // Get current cursor position (or end of history)
+            let current_pos = match get_cursor(ppid) {
+                Ok(Some(pos)) => pos,
+                Ok(None) => snapshots.len() - 1,
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    return 2;
+                }
+            };
+
+            // Check if we can go back
+            if current_pos < count {
+                if current_pos == 0 {
+                    eprintln!("Error: Cannot undo further. Already at initial PATH state.");
+                } else {
+                    eprintln!("Error: Can only undo {current_pos} more step(s). Use 'whi reset' to go back to the initial state.");
+                }
+                return 1;
+            }
+
+            let target_index = current_pos - count;
+            let target_snapshot = &snapshots[target_index];
+
+            // Set cursor to new position
+            if let Err(e) = set_cursor(ppid, target_index) {
+                eprintln!("Error: Failed to set cursor: {e}");
+                return 2;
+            }
+
+            let stdout = io::stdout();
+            let mut out = BufWriter::new(stdout.lock());
+            writeln!(out, "{target_snapshot}").ok();
+            out.flush().ok();
+            0
+        }
+        Err(e) => {
+            eprintln!("Error: {e}");
+            2
+        }
+    }
+}
+
+fn handle_redo(count: usize) -> i32 {
+    use crate::session_tracker::{clear_cursor, get_cursor, read_path_snapshots, set_cursor};
+    use std::io::Write;
+
+    if count == 0 {
+        eprintln!("Error: Count must be at least 1");
+        return 2;
+    }
+
+    let ppid = match get_session_pid() {
+        Ok(pid) => pid,
+        Err(e) => {
+            eprintln!("Error: {e}");
+            return 2;
+        }
+    };
+
+    match read_path_snapshots(ppid) {
+        Ok(snapshots) => {
+            if snapshots.is_empty() {
+                eprintln!("Error: No PATH history found. No operations have been performed in this session.");
+                return 1;
+            }
+
+            // Get current cursor position
+            let current_pos = match get_cursor(ppid) {
+                Ok(Some(pos)) => pos,
+                Ok(None) => {
+                    eprintln!("Error: Already at the latest state. Nothing to redo.");
+                    return 1;
+                }
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    return 2;
+                }
+            };
+
+            // Check if we can go forward
+            let max_pos = snapshots.len() - 1;
+            if current_pos + count > max_pos {
+                let available = max_pos - current_pos;
+                if available == 0 {
+                    eprintln!("Error: Already at the latest state. Nothing to redo.");
+                } else {
+                    eprintln!("Error: Can only redo {available} more step(s).");
+                }
+                return 1;
+            }
+
+            let target_index = current_pos + count;
+            let target_snapshot = &snapshots[target_index];
+
+            // If we're moving to the end, clear cursor; otherwise set it
+            if target_index == max_pos {
+                if let Err(e) = clear_cursor(ppid) {
+                    eprintln!("Error: Failed to clear cursor: {e}");
+                    return 2;
+                }
+            } else if let Err(e) = set_cursor(ppid, target_index) {
+                eprintln!("Error: Failed to set cursor: {e}");
+                return 2;
+            }
+
+            let stdout = io::stdout();
+            let mut out = BufWriter::new(stdout.lock());
+            writeln!(out, "{target_snapshot}").ok();
+            out.flush().ok();
+            0
+        }
+        Err(e) => {
+            eprintln!("Error: {e}");
+            2
+        }
+    }
+}
+
+fn handle_save_profile(profile_name: &str) -> i32 {
+    use crate::config_manager::save_profile;
+
+    let path_var = env::var("PATH").unwrap_or_default();
+
+    match save_profile(profile_name, &path_var) {
+        Ok(()) => {
+            let num_entries = path_var.split(':').filter(|s| !s.is_empty()).count();
+            println!("Saved profile '{profile_name}' ({num_entries} entries)");
+            0
+        }
+        Err(e) => {
+            eprintln!("Error: {e}");
+            2
+        }
+    }
+}
+
+fn handle_load_profile(profile_name: &str) -> i32 {
+    use crate::config_manager::load_profile;
+    use std::io::Write;
+
+    match load_profile(profile_name) {
+        Ok(mut path_string) => {
+            // Self-protection: ensure current whi directory is in PATH (silently append if missing)
+            if let Some(exe_dir) = get_current_exe_dir() {
+                let canonical_exe_dir =
+                    fs::canonicalize(&exe_dir).unwrap_or_else(|_| exe_dir.clone());
+
+                // Check if exe_dir is already in the loaded PATH
+                let path_entries: Vec<&str> = path_string.split(':').collect();
+                let mut found = false;
+
+                for entry in &path_entries {
+                    let entry_path = PathBuf::from(entry);
+                    let canonical_entry =
+                        fs::canonicalize(&entry_path).unwrap_or_else(|_| entry_path.clone());
+
+                    if entry_path == exe_dir
+                        || entry_path == canonical_exe_dir
+                        || canonical_entry == exe_dir
+                        || canonical_entry == canonical_exe_dir
+                    {
+                        found = true;
+                        break;
+                    }
+                }
+
+                // If not found, append it
+                if !found {
+                    if !path_string.is_empty() {
+                        path_string.push(':');
+                    }
+                    path_string.push_str(&exe_dir.display().to_string());
+                }
+            }
+
+            // Write snapshot for the loaded profile
+            if let Ok(ppid) = get_session_pid() {
+                if let Err(e) = session_tracker::write_path_snapshot(ppid, &path_string) {
+                    eprintln!("Warning: Failed to write snapshot for loaded profile: {e}");
+                }
+            }
+
+            let stdout = io::stdout();
+            let mut out = BufWriter::new(stdout.lock());
+            writeln!(out, "{path_string}").ok();
+            out.flush().ok();
+            0
+        }
+        Err(e) => {
+            eprintln!("Error: {e}");
+            1
+        }
+    }
+}
+
+fn handle_remove_profile(profile_name: &str) -> i32 {
+    use crate::config_manager::delete_profile;
+
+    match delete_profile(profile_name) {
+        Ok(()) => {
+            println!("Removed profile '{profile_name}'");
+            0
+        }
+        Err(e) => {
+            eprintln!("Error: {e}");
+            1
+        }
+    }
 }
 
 // TTY detection using isatty(3)

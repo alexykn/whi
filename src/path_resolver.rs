@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 /// Expands tilde notation in paths
+#[must_use]
 pub fn expand_tilde(path: &str) -> String {
     if path == "~" {
         if let Ok(home) = env::var("HOME") {
@@ -10,13 +11,13 @@ pub fn expand_tilde(path: &str) -> String {
         }
     } else if let Some(rest) = path.strip_prefix("~/") {
         if let Ok(home) = env::var("HOME") {
-            return format!("{}/{}", home, rest);
+            return format!("{home}/{rest}");
         }
     }
     path.to_string()
 }
 
-/// Resolves a path string to an absolute PathBuf
+/// Resolves a path string to an absolute `PathBuf`
 pub fn resolve_path(path_str: &str, cwd: &Path) -> Result<PathBuf, String> {
     // First expand tilde
     let expanded = expand_tilde(path_str);
@@ -30,7 +31,7 @@ pub fn resolve_path(path_str: &str, cwd: &Path) -> Result<PathBuf, String> {
 
         // Try to canonicalize if it exists, otherwise just clean it up
         if absolute.exists() {
-            fs::canonicalize(&absolute).map_err(|e| format!("Failed to canonicalize path: {}", e))
+            fs::canonicalize(&absolute).map_err(|e| format!("Failed to canonicalize path: {e}"))
         } else {
             // Clean up path (remove ./ and ../ where possible)
             Ok(normalize_path(&absolute))
@@ -65,12 +66,13 @@ pub struct FuzzyMatcher {
 impl FuzzyMatcher {
     pub fn new(query: &str) -> Self {
         // Split by whitespace and convert to lowercase for case-insensitive matching
-        let query_parts: Vec<String> = query.split_whitespace().map(|s| s.to_lowercase()).collect();
+        let query_parts: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
 
         FuzzyMatcher { query_parts }
     }
 
     /// Check if a path matches the fuzzy query
+    #[must_use]
     pub fn matches(&self, path: &Path) -> bool {
         let path_str = path.to_string_lossy().to_lowercase();
         let mut position = 0;
@@ -89,6 +91,7 @@ impl FuzzyMatcher {
 
     /// Score a match (lower is better, 0 is exact match)
     #[allow(dead_code)]
+    #[must_use]
     pub fn score(&self, path: &Path) -> Option<usize> {
         if !self.matches(path) {
             return None;
@@ -101,6 +104,7 @@ impl FuzzyMatcher {
 }
 
 /// Determines if a string looks like an exact path (not a fuzzy pattern)
+#[must_use]
 pub fn looks_like_exact_path(s: &str) -> bool {
     s.contains('/') || s.starts_with('~') || s.starts_with('.') || s.contains('\\')
 }

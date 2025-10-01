@@ -4,7 +4,7 @@ pub struct PathSearcher {
     dirs: Vec<PathBuf>,
 }
 
-/// Validate a PATH entry for suspicious or malicious content
+/// Validate a `PATH` entry for suspicious or malicious content
 fn validate_path_entry(path: &str) -> Result<(), String> {
     // Check for null bytes
     if path.contains('\0') {
@@ -14,35 +14,33 @@ fn validate_path_entry(path: &str) -> Result<(), String> {
     // Check for control characters (except tab which is valid)
     for ch in path.chars() {
         if ch.is_control() && ch != '\t' {
-            return Err(format!("PATH entry contains control character: {:?}", ch));
+            return Err(format!("PATH entry contains control character: {ch:?}"));
         }
     }
 
     Ok(())
 }
 
-/// Warn about potentially dangerous PATH entries
+/// Warn about potentially dangerous `PATH` entries
 fn warn_suspicious_path(path: &str) {
     // Warn about shell metacharacters that could be dangerous
     const DANGEROUS_CHARS: &[char] = &['$', '`', ';', '&', '|', '<', '>', '(', ')', '{', '}'];
 
     for &ch in DANGEROUS_CHARS {
         if path.contains(ch) {
-            eprintln!(
-                "Warning: PATH entry contains shell metacharacter '{}': {}",
-                ch, path
-            );
+            eprintln!("Warning: PATH entry contains shell metacharacter '{ch}': {path}");
             return;
         }
     }
 
     // Warn about relative paths (but don't reject)
     if !path.starts_with('/') && !path.is_empty() && path != "." {
-        eprintln!("Warning: Relative PATH entry detected: {}", path);
+        eprintln!("Warning: Relative PATH entry detected: {path}");
     }
 }
 
 impl PathSearcher {
+    #[must_use]
     pub fn new(path_var: &str) -> Self {
         let mut has_empty = false;
 
@@ -57,7 +55,7 @@ impl PathSearcher {
 
                 // Validate entry
                 if let Err(e) = validate_path_entry(s) {
-                    eprintln!("Warning: Skipping invalid PATH entry: {}", e);
+                    eprintln!("Warning: Skipping invalid PATH entry: {e}");
                     return None;
                 }
 
@@ -75,6 +73,7 @@ impl PathSearcher {
         PathSearcher { dirs }
     }
 
+    #[must_use]
     pub fn dirs(&self) -> &[PathBuf] {
         &self.dirs
     }
@@ -85,21 +84,16 @@ impl PathSearcher {
         // Validate indices (1-based)
         if from == 0 || to == 0 {
             return Err(format!(
-                "Invalid index: indices must be >= 1 (got from={}, to={})",
-                from, to
+                "Invalid index: indices must be >= 1 (got from={from}, to={to})"
             ));
         }
         if from > len {
             return Err(format!(
-                "Index {} out of bounds (PATH has {} entries)",
-                from, len
+                "Index {from} out of bounds (PATH has {len} entries)"
             ));
         }
         if to > len {
-            return Err(format!(
-                "Index {} out of bounds (PATH has {} entries)",
-                to, len
-            ));
+            return Err(format!("Index {to} out of bounds (PATH has {len} entries)"));
         }
 
         // Convert to 0-based
@@ -125,20 +119,17 @@ impl PathSearcher {
         // Validate indices (1-based)
         if idx1 == 0 || idx2 == 0 {
             return Err(format!(
-                "Invalid index: indices must be >= 1 (got idx1={}, idx2={})",
-                idx1, idx2
+                "Invalid index: indices must be >= 1 (got idx1={idx1}, idx2={idx2})"
             ));
         }
         if idx1 > len {
             return Err(format!(
-                "Index {} out of bounds (PATH has {} entries)",
-                idx1, len
+                "Index {idx1} out of bounds (PATH has {len} entries)"
             ));
         }
         if idx2 > len {
             return Err(format!(
-                "Index {} out of bounds (PATH has {} entries)",
-                idx2, len
+                "Index {idx2} out of bounds (PATH has {len} entries)"
             ));
         }
 
@@ -158,6 +149,7 @@ impl PathSearcher {
             .join(":"))
     }
 
+    #[must_use]
     pub fn clean_duplicates(&self) -> (String, Vec<usize>) {
         let mut seen = std::collections::HashSet::new();
         let mut cleaned = Vec::new();
@@ -181,12 +173,11 @@ impl PathSearcher {
 
         // Validate index (1-based)
         if idx == 0 {
-            return Err(format!("Invalid index: {} (must be >= 1)", idx));
+            return Err(format!("Invalid index: {idx} (must be >= 1)"));
         }
         if idx > len {
             return Err(format!(
-                "Index {} out of bounds (PATH has {} entries)",
-                idx, len
+                "Index {idx} out of bounds (PATH has {len} entries)"
             ));
         }
 
@@ -211,12 +202,11 @@ impl PathSearcher {
         // Validate all indices (1-based)
         for &idx in indices {
             if idx == 0 {
-                return Err(format!("Invalid index: {} (indices must be >= 1)", idx));
+                return Err(format!("Invalid index: {idx} (indices must be >= 1)"));
             }
             if idx > len {
                 return Err(format!(
-                    "Index {} out of bounds (PATH has {} entries)",
-                    idx, len
+                    "Index {idx} out of bounds (PATH has {len} entries)"
                 ));
             }
         }
@@ -244,8 +234,8 @@ impl PathSearcher {
             .join(":"))
     }
 
-    /// Add a new directory to PATH if not already present at the beginning
-    /// Returns the new PATH string and the index where it was added (1-based)
+    /// Add a new directory to `PATH` if not already present at the beginning
+    /// Returns the new `PATH` string and the index where it was added (1-based)
     pub fn add_path(&self, path: &std::path::Path) -> Result<(String, usize), String> {
         match self.add_path_at_position(path, 1) {
             Ok(new_path) => Ok((new_path, 1)),
@@ -253,8 +243,8 @@ impl PathSearcher {
         }
     }
 
-    /// Add a new directory to PATH at a specific position if not already present
-    /// Returns the new PATH string (1-based position)
+    /// Add a new directory to `PATH` at a specific position if not already present
+    /// Returns the new `PATH` string (1-based position)
     pub fn add_path_at_position(
         &self,
         path: &std::path::Path,
@@ -290,6 +280,7 @@ impl PathSearcher {
     }
 
     /// Find the index of an exact path match (1-based)
+    #[must_use]
     pub fn find_path_index(&self, path: &std::path::Path) -> Option<usize> {
         use std::fs;
 
@@ -314,6 +305,7 @@ impl PathSearcher {
     }
 
     /// Find all indices matching a fuzzy pattern
+    #[must_use]
     pub fn find_fuzzy_indices(
         &self,
         pattern: &str,
@@ -322,7 +314,7 @@ impl PathSearcher {
         use crate::path_resolver::FuzzyMatcher;
 
         let matcher = FuzzyMatcher::new(pattern);
-        let mut matches = Vec::new();
+        let mut fuzzy_results = Vec::new();
 
         for (idx, dir) in self.dirs.iter().enumerate() {
             if matcher.matches(dir) {
@@ -334,17 +326,17 @@ impl PathSearcher {
                     }
                 }
 
-                matches.push((idx + 1, dir)); // 1-based index
+                fuzzy_results.push((idx + 1, dir)); // 1-based index
             }
         }
 
         // Sort by match quality (shorter paths first)
-        matches.sort_by_key(|(_, path)| path.as_os_str().len());
+        fuzzy_results.sort_by_key(|(_, path)| path.as_os_str().len());
 
-        matches
+        fuzzy_results
     }
 
-    /// Delete a PATH entry by exact path match
+    /// Delete a `PATH` entry by exact path match
     #[allow(dead_code)]
     pub fn delete_by_path(&self, path: &std::path::Path) -> Result<String, String> {
         if let Some(idx) = self.find_path_index(path) {
@@ -355,6 +347,7 @@ impl PathSearcher {
     }
 
     /// Check if an executable exists in a directory
+    #[must_use]
     pub fn has_executable(&self, dir: &std::path::Path, name: &str) -> bool {
         use crate::executor::ExecutableCheck;
 
@@ -362,7 +355,8 @@ impl PathSearcher {
         exec_path.exists() && ExecutableCheck::new(&exec_path).is_executable()
     }
 
-    /// Convert current dirs to PATH string
+    /// Convert current dirs to `PATH` string
+    #[must_use]
     pub fn to_path_string(&self) -> String {
         self.dirs
             .iter()

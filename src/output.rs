@@ -8,6 +8,7 @@ pub struct OutputFormatter {
 }
 
 impl OutputFormatter {
+    #[must_use]
     pub fn new(use_color: bool, print0: bool) -> Self {
         OutputFormatter { use_color, print0 }
     }
