@@ -366,6 +366,13 @@ fn should_use_color(args: &Args) -> bool {
     }
 }
 
+/// Get the directory containing the current whi executable
+fn get_current_exe_dir() -> Option<PathBuf> {
+    env::current_exe()
+        .ok()
+        .and_then(|exe_path| exe_path.parent().map(|p| p.to_path_buf()))
+}
+
 fn handle_prefer<W: Write>(
     searcher: &PathSearcher,
     target: &crate::cli::PreferTarget,
@@ -733,17 +740,6 @@ fn handle_delete<W: Write>(
                     for (idx, _) in &matches {
                         indices_to_delete.push(*idx);
                     }
-
-                    if !args.silent && matches.len() > 1 {
-                        eprintln!(
-                            "Deleting {} PATH entries matching '{}':",
-                            matches.len(),
-                            path_str
-                        );
-                        for (idx, path) in &matches {
-                            eprintln!("  [{}] {}", idx, path.display());
-                        }
-                    }
                 }
             }
         }
@@ -751,6 +747,42 @@ fn handle_delete<W: Write>(
 
     // Get the paths to be deleted before deletion (for logging)
     let dirs = searcher.dirs();
+
+    // Filter out the directory containing the current whi executable (silently)
+    if let Some(exe_dir) = get_current_exe_dir() {
+        // Try to canonicalize for better matching
+        let canonical_exe_dir = fs::canonicalize(&exe_dir).unwrap_or_else(|_| exe_dir.clone());
+
+        indices_to_delete.retain(|&idx| {
+            if idx > 0 && idx <= dirs.len() {
+                let path = &dirs[idx - 1];
+                // Compare both as-is and canonicalized paths
+                let canonical_path = fs::canonicalize(path).unwrap_or_else(|_| path.clone());
+
+                // Keep the index if it doesn't match the executable's directory
+                path != &exe_dir
+                    && path != &canonical_exe_dir
+                    && canonical_path != exe_dir
+                    && canonical_path != canonical_exe_dir
+            } else {
+                true
+            }
+        });
+    }
+
+    // Remove duplicates before displaying
+    indices_to_delete.sort_unstable();
+    indices_to_delete.dedup();
+
+    // Show list of entries being deleted (for multi-delete operations)
+    if !args.silent && indices_to_delete.len() > 1 {
+        for &idx in &indices_to_delete {
+            if idx > 0 && idx <= dirs.len() {
+                eprintln!("{:>4} {}", format!("[{}]", idx), dirs[idx - 1].display());
+            }
+        }
+    }
+
     let deleted_paths: Vec<String> = indices_to_delete
         .iter()
         .filter_map(|&idx| {
@@ -761,10 +793,6 @@ fn handle_delete<W: Write>(
             }
         })
         .collect();
-
-    // Remove duplicates and perform deletion
-    indices_to_delete.sort_unstable();
-    indices_to_delete.dedup();
 
     let result = if indices_to_delete.len() == 1 {
         searcher.delete_entry(indices_to_delete[0])

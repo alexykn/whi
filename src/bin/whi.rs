@@ -201,7 +201,8 @@ fn run_query(opts: QueryArgs) -> i32 {
         ..Default::default()
     };
 
-    if args.names.is_empty() {
+    // Show usage only if no names AND no flags that imply listing PATH
+    if args.names.is_empty() && !args.full && !args.all {
         println!("Usage: whi [OPTIONS] [NAME]...\n       whi <COMMAND>\n\nTry 'whi --help' for more information.");
         return 0;
     }
