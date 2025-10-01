@@ -155,7 +155,32 @@ impl From<ColorChoice> for ColorWhen {
 }
 
 fn main() {
-    let Cli { query, command } = Cli::parse();
+    let cli_result = Cli::try_parse();
+
+    // If parsing failed, rewrite error messages to hide internal command names
+    let Cli { query, command } = match cli_result {
+        Ok(cli) => cli,
+        Err(err) => {
+            let err_msg = err.to_string();
+
+            // Rewrite hidden command names to their public equivalents
+            let rewritten = err_msg
+                .replace("whi __move", "whi move")
+                .replace("whi __swap", "whi switch")
+                .replace("whi __clean", "whi clean")
+                .replace("whi __delete", "whi delete")
+                .replace("whi __prefer", "whi prefer");
+
+            // If the message was rewritten, print it and exit
+            if rewritten != err_msg {
+                eprint!("{}", rewritten);
+                process::exit(2);
+            }
+
+            // Otherwise, use the original error handling
+            err.exit();
+        }
+    };
 
     let exit_code = match command {
         Some(Command::Diff(diff)) => run_diff(diff),

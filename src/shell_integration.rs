@@ -133,19 +133,7 @@ whid() {
         return 2
     fi
 
-    local all_numeric=1
-    for arg in "$@"; do
-        if ! [[ "$arg" =~ ^[0-9]+$ ]]; then
-            all_numeric=0
-            break
-        fi
-    done
-
-    if [ "$all_numeric" -eq 1 ]; then
-        __whi_apply_path delete "$@"
-    else
-        __whi_apply_path delete "$*"
-    fi
+    __whi_apply_path delete "$@"
 }
 
 whia() {
@@ -406,19 +394,7 @@ whid() {
         return 2
     fi
 
-    local all_numeric=1
-    for arg in "$@"; do
-        if ! [[ "$arg" =~ ^[0-9]+$ ]]; then
-            all_numeric=0
-            break
-        fi
-    done
-
-    if [ "$all_numeric" -eq 1 ]; then
-        __whi_apply_path delete "$@"
-    else
-        __whi_apply_path delete "$*"
-    fi
+    __whi_apply_path delete "$@"
 }
 
 whia() {
@@ -667,19 +643,7 @@ function whid
         return 2
     end
 
-    set -l all_numeric 1
-    for arg in $argv
-        if not string match -qr '^[0-9]+$' -- $arg
-            set all_numeric 0
-            break
-        end
-    end
-
-    if test $all_numeric -eq 1
-        __whi_apply delete $argv
-    else
-        __whi_apply delete (string join ' ' $argv)
-    end
+    __whi_apply delete $argv
 end
 
 function whia
