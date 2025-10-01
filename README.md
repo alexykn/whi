@@ -46,13 +46,16 @@ whi -an cargo
 whi -f
 whi -fn
 
-# Prefer a specific executable or add a path
-# Makes the minimal required change to path / puts it at
-# the lowest spot in path that achieves it being the winner
-whi prefer cargo 5
-whi prefer cargo ~/.cargo/bin
-whi prefer cargo github release
-whi prefer ~/.local/bin      # no executable provided -> acts like fish_add_path
+# Prefer: make an executable win (or add a path)
+# The Swiss Army knife - works with index, path, or fuzzy pattern
+# Makes minimal changes to achieve the goal
+
+whi prefer cargo 5                   # prefer by index
+whi prefer cargo ~/.cargo/bin        # prefer by exact path (moves if present)
+whi prefer cargo ~/new/rust/bin      # adds path if not in PATH (validates cargo exists!)
+whi prefer cargo toolchain stable    # prefer by fuzzy pattern
+whi prefer bat github release        # another fuzzy example
+whi prefer ~/.local/bin              # no executable -> add path (like fish_add_path)
 
 # Move and swap entries by index (1-based)
 whi move 12 1
@@ -118,7 +121,13 @@ Useful flags:
 These are defined by the integration and map directly to the core commands:
 
 ```bash
-whip cargo github release    # -> whi prefer ...
+# whip: Swiss Army knife for PATH management
+whip cargo 5                 # prefer by index
+whip cargo ~/.cargo/bin      # prefer by path (adds if needed!)
+whip cargo toolchain stable  # prefer by fuzzy pattern
+whip ~/.local/bin            # add path to PATH
+
+# Other shortcuts
 whim 12 1                    # -> whi move ...
 whis 4 9                     # -> whi switch ...
 whic                         # -> whi clean
