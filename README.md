@@ -133,36 +133,30 @@ The `whi init <shell>` command outputs shell-specific functions that you can eva
   $ whid local bin               # Delete ALL paths matching pattern
   ```
 
-- **`whia NAME`** - Show all matches with indices (shortcut for `whi -ia`)
+- **`whia NAME`** - Show all matches with indices (shortcut for `whi -a`)
   ```bash
-  $ whia cargo     # Equivalent to: whi -ia cargo
-  ```
-
-- **`whii [NAME]`** - Show PATH entries or matches with indices (shortcut for `whi -i`)
-  ```bash
-  $ whii           # Show all PATH entries with indices
-  $ whii cargo     # Show cargo matches with indices
+  $ whia cargo     # Equivalent to: whi -a cargo
   ```
 
 **Important:** These commands only modify your **current shell session**. Changes are temporary until you use `whi save` to persist them.
 
 ### Basic Usage
 
-View all PATH entries (with or without indices):
+View all PATH entries (indices shown by default):
 
 ```bash
 $ whi
-/Users/user/.rustup/toolchains/stable-aarch64-apple-darwin/bin
-/opt/homebrew/bin
-/usr/local/bin
-/usr/bin
-...
-
-$ whi -i    # Or use the whii shortcut
 [1] /Users/user/.rustup/toolchains/stable-aarch64-apple-darwin/bin
 [2] /opt/homebrew/bin
 [3] /usr/local/bin
 [4] /usr/bin
+...
+
+$ whi -n    # Hide indices with --no-index
+/Users/user/.rustup/toolchains/stable-aarch64-apple-darwin/bin
+/opt/homebrew/bin
+/usr/local/bin
+/usr/bin
 ...
 ```
 
@@ -378,21 +372,21 @@ $ whi python node cargo gcc
 /usr/bin/gcc
 ```
 
-Show all PATH entries (with or without indices):
+Show all PATH entries (indices shown by default):
 
 ```bash
-$ whi          # Plain listing
-/Users/user/.rustup/toolchains/stable-aarch64-apple-darwin/bin
-/opt/homebrew/bin
-/usr/local/bin
-/usr/bin
-...
-
-$ whi -i       # With indices
+$ whi          # With indices (default)
 [1] /Users/user/.rustup/toolchains/stable-aarch64-apple-darwin/bin
 [2] /opt/homebrew/bin
 [3] /usr/local/bin
 [4] /usr/bin
+...
+
+$ whi -n       # Plain listing (no indices)
+/Users/user/.rustup/toolchains/stable-aarch64-apple-darwin/bin
+/opt/homebrew/bin
+/usr/local/bin
+/usr/bin
 ...
 ```
 
@@ -407,11 +401,11 @@ $ whi --path="/usr/local/bin:/usr/bin" python
 
 ### Flags
 
-Short flags can be combined Unix-style (e.g., `-ai` = `-a -i`, `-ais` = `-a -i -s`).
+Short flags can be combined Unix-style (e.g., `-al` = `-a -l`, `-als` = `-a -l -s`).
 
 - **`-a, --all`** - Show all PATH matches (default: only winner)
 - **`-f, --full`** - Show all matches + full PATH listing (implies `-a`; directories with matches highlighted in color)
-- **`-i, --index`** - Show PATH index next to each entry
+- **`-n, --no-index`** - Hide PATH index (shown by default)
 - **`-l, -L, --follow-symlinks`** - Resolve and show canonical targets
 - **`-o, --one`** - Only print the first match per name
 - **`-s, --stat`** - Include inode/device/mtime/size metadata
@@ -539,10 +533,10 @@ Find all versions of Python in PATH:
 $ whi -a python python3 python3.11
 ```
 
-Check which node would run with indices:
+Check which node would run:
 
 ```bash
-$ whi -i node
+$ whi node
 ```
 
 Use with xargs to check executables:
@@ -560,7 +554,7 @@ $ whi -ais gcc
 Show all PATH entries with indices:
 
 ```bash
-$ whi -i       # Or use whii shortcut
+$ whi          # Indices shown by default
 [1] /usr/local/bin
 [2] /usr/bin
 [3] /bin

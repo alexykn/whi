@@ -40,7 +40,7 @@ pub struct Args {
     pub path_override: Option<String>,
     pub color: ColorWhen,
     pub stat: bool,
-    pub index: bool,
+    pub no_index: bool,
     pub move_indices: Option<(usize, usize)>,
     pub swap_indices: Option<(usize, usize)>,
     pub prefer_target: Option<PreferTarget>,
@@ -77,7 +77,7 @@ impl Args {
             path_override: None,
             color: ColorWhen::Auto,
             stat: false,
-            index: false,
+            no_index: false,
             move_indices: None,
             swap_indices: None,
             prefer_target: None,
@@ -314,7 +314,7 @@ impl Args {
         match arg {
             "-a" | "--all" => args.all = true,
             "-f" | "--full" => args.full = true,
-            "-i" | "--index" => args.index = true,
+            "-n" | "--no-index" => args.no_index = true,
             "-l" | "-L" | "--follow-symlinks" => args.follow_symlinks = true,
             "--move" => state.expect_move_from = true,
             "--swap" => state.expect_swap_from = true,
@@ -352,13 +352,13 @@ impl Args {
     }
 
     fn parse_combined_flags(args: &mut Args, s: &str) -> Result<(), String> {
-        // Handle combined short flags like -af, -ail, -aifL
+        // Handle combined short flags like -af, -anl, -afL
         for ch in s[1..].chars() {
             match ch {
                 'a' => args.all = true,
                 'c' => args.clean = true,
                 'f' => args.full = true,
-                'i' => args.index = true,
+                'n' => args.no_index = true,
                 'l' | 'L' => args.follow_symlinks = true,
                 'o' => args.one = true,
                 's' => args.stat = true,
@@ -395,7 +395,7 @@ USAGE:
 FLAGS:
     -a, --all              Show all PATH matches (default: only winner)
     -f, --full             Show all matches + full PATH listing (implies -a)
-    -i, --index            Show PATH index next to each entry
+    -n, --no-index         Hide PATH index (shown by default)
     -l, -L, --follow-symlinks
                            Resolve and show canonical targets
     -s, --stat             Include inode/device/mtime/size metadata

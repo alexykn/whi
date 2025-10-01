@@ -215,7 +215,7 @@ fn run(args: &Args) -> i32 {
         }
 
         for (idx, dir) in searcher.dirs().iter().enumerate() {
-            if args.index {
+            if !args.no_index {
                 writeln!(out, "{:>4} {}", format!("[{}]", idx + 1), dir.display()).ok();
             } else {
                 writeln!(out, "{}", dir.display()).ok();
@@ -263,7 +263,7 @@ fn run(args: &Args) -> i32 {
                     result,
                     is_winner,
                     args.follow_symlinks,
-                    args.index,
+                    !args.no_index,
                     3, // Always use 3-digit width
                 )
                 .ok();
@@ -287,7 +287,7 @@ fn run(args: &Args) -> i32 {
                 let path_index = idx + 1;
                 let has_match = match_indices.contains(&path_index);
 
-                if args.index {
+                if !args.no_index {
                     write!(out, "{:>4} ", format!("[{}]", path_index)).ok();
                 }
 

@@ -79,10 +79,6 @@ whia() {
     whi -ia "$@"
 }
 
-whii() {
-    whi -i "$@"
-}
-
 whic() {
     local new_path
     new_path=$(whi --clean)
@@ -204,10 +200,6 @@ whia() {
     whi -ia "$@"
 }
 
-whii() {
-    whi -i "$@"
-}
-
 whic() {
     local new_path
     new_path=$(whi --clean)
@@ -325,10 +317,6 @@ end
 
 function whia
     whi -ia $argv
-end
-
-function whii
-    whi -i $argv
 end
 
 function whic
