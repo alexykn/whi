@@ -1,8 +1,11 @@
 # whi shell integration for bash/zsh (v0.4.0)
 
 # Load saved PATH first (if it exists)
-if [ -f ~/.whi/saved_path_bash ]; then
-    export PATH="$(cat ~/.whi/saved_path_bash)"
+# Detect shell and load the appropriate saved_path file
+if [ -n "$BASH_VERSION" ]; then
+    [ -f ~/.whi/saved_path_bash ] && export PATH="$(cat ~/.whi/saved_path_bash)"
+elif [ -n "$ZSH_VERSION" ]; then
+    [ -f ~/.whi/saved_path_zsh ] && export PATH="$(cat ~/.whi/saved_path_zsh)"
 fi
 
 __whi_apply_path() {
@@ -345,9 +348,10 @@ if [ -z "$WHI_SHELL_INITIALIZED" ]; then
     command whi __init "$WHI_SESSION_PID" 2>/dev/null
 fi
 
-# IMPORTANT: Add this to the END of your shell config (~/.bashrc, ~/.zshrc, etc.):
+# IMPORTANT: Add this to the END of your shell config:
 #
-#   eval "$(whi init bash)"  # or: eval "$(whi init zsh)"
+#   bash: Add to ~/.bashrc:  eval "$(whi init bash)"
+#   zsh:  Add to ~/.zshrc:   eval "$(whi init zsh)"
 #
 # This must be at the END so whi captures your final PATH after all modifications.
 #
@@ -356,4 +360,5 @@ fi
 #
 # Or run in the current shell:
 #
-#   eval "$(whi init bash)"
+#   bash: eval "$(whi init bash)"
+#   zsh:  eval "$(whi init zsh)"

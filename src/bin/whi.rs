@@ -308,7 +308,7 @@ fn main() {
 
 fn run_query(opts: QueryArgs) -> i32 {
     if std::env::var("WHI_SHELL_INITIALIZED").is_err() {
-        eprintln!("Shell integration not detected.\n\nRun one of these commands:\n  bash/zsh (current shell):   eval \"$(whi init bash)\"\n  bash/zsh (persistent):      add that line to the END of ~/.bashrc or ~/.zshrc\n  fish (current shell):       whi init fish | source\n  fish (persistent):          add that line to the END of ~/.config/fish/config.fish\n");
+        eprintln!("Shell integration not detected.\n\nRun one of these commands:\n  bash (current shell):    eval \"$(whi init bash)\"\n  bash (persistent):       add that line to the END of ~/.bashrc\n  zsh (current shell):     eval \"$(whi init zsh)\"\n  zsh (persistent):        add that line to the END of ~/.zshrc\n  fish (current shell):    whi init fish | source\n  fish (persistent):       add that line to the END of ~/.config/fish/config.fish\n");
         return 2;
     }
 
