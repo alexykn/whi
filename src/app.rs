@@ -1,6 +1,6 @@
 use std::env;
 use std::fs;
-use std::io::{self, BufRead, BufWriter, Write};
+use std::io::{self, BufRead, BufWriter, StdoutLock, Write};
 use std::path::{Path, PathBuf};
 
 use crate::cli::{Args, ColorWhen};
@@ -23,6 +23,44 @@ fn get_session_pid() -> Result<u32, std::io::Error> {
         })
     } else {
         system::get_parent_pid()
+    }
+}
+
+/// Write PATH snapshot to session tracker, with error handling
+fn write_snapshot_safe(new_path: &str, args: &Args) {
+    if let Ok(ppid) = get_session_pid() {
+        if let Err(e) = session_tracker::write_path_snapshot(ppid, new_path) {
+            if !args.quiet && !args.silent {
+                eprintln!("Warning: Failed to write snapshot: {e}");
+            }
+        }
+    }
+}
+
+/// Output new PATH and flush, returning success code
+fn output_path(out: &mut BufWriter<StdoutLock>, new_path: &str) -> i32 {
+    writeln!(out, "{new_path}").ok();
+    out.flush().ok();
+    0
+}
+
+/// Handle Result from PATH operation: write snapshot on success, print error on failure
+fn handle_path_result(
+    result: Result<String, String>,
+    args: &Args,
+    out: &mut BufWriter<StdoutLock>,
+) -> i32 {
+    match result {
+        Ok(new_path) => {
+            write_snapshot_safe(&new_path, args);
+            output_path(out, &new_path)
+        }
+        Err(e) => {
+            if !args.silent {
+                eprintln!("Error: {e}");
+            }
+            2
+        }
     }
 }
 
@@ -95,19 +133,8 @@ pub fn run(args: &Args) -> i32 {
     // Handle --clean operation
     if args.clean {
         let (new_path, _removed_indices) = searcher.clean_duplicates();
-
-        // Write snapshot of new state
-        if let Ok(ppid) = get_session_pid() {
-            if let Err(e) = session_tracker::write_path_snapshot(ppid, &new_path) {
-                if !args.quiet && !args.silent {
-                    eprintln!("Warning: Failed to write snapshot: {e}");
-                }
-            }
-        }
-
-        writeln!(out, "{new_path}").ok();
-        out.flush().ok();
-        return 0;
+        write_snapshot_safe(&new_path, args);
+        return output_path(&mut out, &new_path);
     }
 
     // Handle --delete operation
@@ -117,52 +144,12 @@ pub fn run(args: &Args) -> i32 {
 
     // Handle --move operation
     if let Some((from, to)) = args.move_indices {
-        match searcher.move_entry(from, to) {
-            Ok(new_path) => {
-                if let Ok(ppid) = get_session_pid() {
-                    if let Err(e) = session_tracker::write_path_snapshot(ppid, &new_path) {
-                        if !args.quiet && !args.silent {
-                            eprintln!("Warning: Failed to write snapshot: {e}");
-                        }
-                    }
-                }
-
-                writeln!(out, "{new_path}").ok();
-                out.flush().ok();
-                return 0;
-            }
-            Err(e) => {
-                if !args.silent {
-                    eprintln!("Error: {e}");
-                }
-                return 2;
-            }
-        }
+        return handle_path_result(searcher.move_entry(from, to), args, &mut out);
     }
 
     // Handle --swap operation
     if let Some((idx1, idx2)) = args.swap_indices {
-        match searcher.swap_entries(idx1, idx2) {
-            Ok(new_path) => {
-                if let Ok(ppid) = get_session_pid() {
-                    if let Err(e) = session_tracker::write_path_snapshot(ppid, &new_path) {
-                        if !args.quiet && !args.silent {
-                            eprintln!("Warning: Failed to write snapshot: {e}");
-                        }
-                    }
-                }
-
-                writeln!(out, "{new_path}").ok();
-                out.flush().ok();
-                return 0;
-            }
-            Err(e) => {
-                if !args.silent {
-                    eprintln!("Error: {e}");
-                }
-                return 2;
-            }
-        }
+        return handle_path_result(searcher.swap_entries(idx1, idx2), args, &mut out);
     }
 
     // Handle --prefer operation
