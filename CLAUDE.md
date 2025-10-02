@@ -113,3 +113,150 @@ No integration tests directory exists yet. When adding integration tests, follow
 ### Output formatting changes
 
 All output formatting goes through `OutputFormatter` in output.rs. Color codes are ANSI escape sequences applied directly when `use_color` is true.
+
+Here’s a concise, drop-in CLAUDE.md section you can paste into any project.
+
+---
+
+## MCP: Usage Guide
+
+This section explains how to use the four MCP tools—**Context7**, **Tree-sitter**, **Serena**, and **Git (Local)**—and when to choose each one.
+
+---
+
+### Context7 — Library Docs & Examples
+
+**Purpose:** Instant API lookups and code snippets (sub-second).
+**Use for:** “How do I …?” syntax, validators/routing/DI patterns, quick examples.
+**Avoid for:** Deep “why” questions, discovery/research, niche libs with low coverage.
+
+**Core calls**
+
+```python
+resolve-library-id("fastapi")  # choose highest trust + most snippets
+get-library-docs("/websites/fastapi_tiangolo", topic="dependency injection", tokens=2000)
+# topic is optional; tokens default ~5000 (1k–20k)
+```
+
+**Tips**
+
+* Prefer libraries with Trust ≥ 7.0 and high snippet counts.
+* Use `topic` to narrow results; source URLs are included for deeper reading.
+
+---
+
+### Tree-sitter — AST Analysis (Read-only)
+
+**Purpose:** Cross-file, language-agnostic AST queries and metrics (sub-second, no indexing).
+**Use for:** Finding symbols/patterns, complexity hot spots, dependency/import maps.
+**Avoid for:** Editing code; fetching docs (use Context7).
+
+**Session setup (every new session)**
+
+```python
+register_project_tool(path="/abs/path/to/repo", name="repo")  # required each session
+```
+
+**Core calls**
+
+```python
+analyze_project("repo")                     # files, languages, build files
+analyze_complexity("repo", "src/app.rs")    # cyclomatic, avg lines, ratios
+get_symbols("repo", "src/file.rs")          # functions, structs, imports (deep)
+get_dependencies("repo", "src/file.rs")     # clean import list
+list_query_templates_tool("rust")           # built-in patterns
+run_query("repo", "(function_item name: (identifier) @name)", language="rust")
+```
+
+**Tips**
+
+* Use query templates to avoid writing raw S-expressions.
+* Great for “find then edit” workflows (pair with Serena).
+
+---
+
+### Serena — Symbol-Based Editing
+
+**Purpose:** Token-efficient edits by **symbol**, not line numbers (~10× cheaper than full-file edits).
+**Use for:** Replacing function/method **bodies**, inserting imports/attrs, adding methods.
+**Avoid for:** Finding symbols (use Tree-sitter first), changing function **signatures**.
+
+**Core calls (body-only!)**
+
+```python
+replace_symbol_body("TypeOrMod/method_name", "src/file.rs", """    // new body""")
+insert_before_symbol("TypeOrMod/Target", "src/file.rs", "use crate::thing::Item;")
+insert_after_symbol("TypeOrMod/Target", "src/file.rs", """
+pub fn helper(&self) { /* ... */ }
+""")
+```
+
+**Tips**
+
+* Use full name paths (e.g., `StructName/method_name`) to avoid collisions.
+* `replace_symbol_body` only replaces the block **inside `{}`**.
+
+---
+
+### Git (Local) — Safe Review → Stage → Commit
+
+**Purpose:** Structured, safe local Git operations.
+**Use for:** Status/diffs, staging, atomic commits, quick history/branch ops.
+**Avoid for:** Push/pull/fetch/rebase/stash/force (run in shell manually).
+
+**Core calls**
+
+```python
+git_status("/abs/path/to/repo")
+git_diff_unstaged("/abs/path/to/repo", context_lines=3)
+git_add("/abs/path/to/repo", ["src/file.rs"])
+git_diff_staged("/abs/path/to/repo")
+git_commit("/abs/path/to/repo", "feat: concise commit message")
+
+git_log("/abs/path/to/repo", max_count=5)
+git_show("/abs/path/to/repo", "HEAD~1")
+git_branch("/abs/path/to/repo", "local")
+git_create_branch("/abs/path/to/repo", "feature/x", base_branch="main")
+git_checkout("/abs/path/to/repo", "feature/x")
+git_diff("/abs/path/to/repo", "HEAD~2..HEAD")
+```
+
+**Tips**
+
+* Always review unstaged and staged diffs before committing.
+* One logical change per commit (atomic commits).
+
+---
+
+### Which Tool When? (Quick Guide)
+
+**Primary decision rule**
+
+* **Need docs/examples fast?** → **Context7**
+* **Need to *find* code patterns/symbols?** → **Tree-sitter**
+* **Need to *edit* code by symbol efficiently?** → **Serena**
+* **Need to review/stage/commit safely?** → **Git (Local)**
+
+**Common tasks → tool**
+
+| Task                                                                    | Tool                                                                           |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| “How do I write a field validator in Pydantic?”                         | **Context7**                                                                   |
+| “List all public functions / find all structs / imports across project” | **Tree-sitter**                                                                |
+| “Replace body of `run()` / insert import / add helper method”           | **Serena**                                                                     |
+| “Show changes → stage selected files → commit”                          | **Git (Local)**                                                                |
+| “Find all uses of deprecated API pattern”                               | **Tree-sitter** (then **Serena** to fix)                                       |
+| “Add feature using new library I don’t know”                            | **Context7**, then **Serena**, verify with **Tree-sitter**, commit via **Git** |
+
+**Canonical workflows**
+
+1. **Single-symbol refactor:** Tree-sitter (find) → Serena (edit) → Git (review/commit)
+2. **Cross-file pattern fix:** Tree-sitter (query across repo) → Serena (apply to matches) → Git
+3. **Learn & implement:** Context7 (examples) → Serena (code) → Tree-sitter (sanity check) → Git
+
+**Session init (minimal)**
+
+```python
+register_project_tool("/abs/path/to/repo", "repo")
+git_status("/abs/path/to/repo")
+````
