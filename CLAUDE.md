@@ -114,11 +114,9 @@ No integration tests directory exists yet. When adding integration tests, follow
 
 All output formatting goes through `OutputFormatter` in output.rs. Color codes are ANSI escape sequences applied directly when `use_color` is true.
 
-Here’s a concise, drop-in CLAUDE.md section you can paste into any project.
-
 ---
 
-## MCP: Usage Guide
+## MCP Usage Guide
 
 This section explains how to use the four MCP tools—**Context7**, **Tree-sitter**, **Serena**, and **Git (Local)**—and when to choose each one.
 
@@ -147,9 +145,9 @@ get-library-docs("/websites/fastapi_tiangolo", topic="dependency injection", tok
 
 ### Tree-sitter — AST Analysis (Read-only)
 
-**Purpose:** Cross-file, language-agnostic AST queries and metrics (sub-second, no indexing).
+**Purpose:** Read-only AST queries and metrics (sub-second, no indexing). Cannot edit code.
 **Use for:** Finding symbols/patterns, complexity hot spots, dependency/import maps.
-**Avoid for:** Editing code; fetching docs (use Context7).
+**Avoid for:** Editing code (use Serena); fetching docs (use Context7).
 
 **Session setup (every new session)**
 
@@ -160,30 +158,39 @@ register_project_tool(path="/abs/path/to/repo", name="repo")  # required each se
 **Core calls**
 
 ```python
+# Analysis
 analyze_project("repo")                     # files, languages, build files
 analyze_complexity("repo", "src/app.rs")    # cyclomatic, avg lines, ratios
 get_symbols("repo", "src/file.rs")          # functions, structs, imports (deep)
 get_dependencies("repo", "src/file.rs")     # clean import list
-list_query_templates_tool("rust")           # built-in patterns
+
+# Pattern matching
+list_query_templates_tool("rust")           # built-in patterns (functions, structs, enums...)
+build_query("rust", ["functions", "structs"], combine="or")
 run_query("repo", "(function_item name: (identifier) @name)", language="rust")
+
+# Deep inspection
+get_ast("repo", "src/file.rs", max_depth=3) # full AST tree
+find_usage("repo", "SymbolName", file_path="src/file.rs")
 ```
 
 **Tips**
 
 * Use query templates to avoid writing raw S-expressions.
-* Great for “find then edit” workflows (pair with Serena).
+* Pair with Serena: Tree-sitter finds what to change, Serena makes the change.
 
 ---
 
 ### Serena — Symbol-Based Editing
 
-**Purpose:** Token-efficient edits by **symbol**, not line numbers (~10× cheaper than full-file edits).
+**Purpose:** Edit by **symbol name** (10× cheaper: 200 tokens vs 2,350 for Read+Edit).
 **Use for:** Replacing function/method **bodies**, inserting imports/attrs, adding methods.
 **Avoid for:** Finding symbols (use Tree-sitter first), changing function **signatures**.
 
 **Core calls (body-only!)**
 
 ```python
+# 10x more efficient than Read + Edit
 replace_symbol_body("TypeOrMod/method_name", "src/file.rs", """    // new body""")
 insert_before_symbol("TypeOrMod/Target", "src/file.rs", "use crate::thing::Item;")
 insert_after_symbol("TypeOrMod/Target", "src/file.rs", """
@@ -195,6 +202,7 @@ pub fn helper(&self) { /* ... */ }
 
 * Use full name paths (e.g., `StructName/method_name`) to avoid collisions.
 * `replace_symbol_body` only replaces the block **inside `{}`**.
+* Robust: edits by symbol name, not line numbers (survives file changes).
 
 ---
 
@@ -229,6 +237,12 @@ git_diff("/abs/path/to/repo", "HEAD~2..HEAD")
 ---
 
 ### Which Tool When? (Quick Guide)
+
+**Core distinction**
+
+* **Tree-sitter** = Read-only analysis (find what to change)
+* **Serena** = Symbol-based editing (make the change)
+* They're complementary, not competing
 
 **Primary decision rule**
 
