@@ -1,4 +1,4 @@
-# whi shell integration for fish (v0.4.0)
+# whi shell integration for fish (v0.4.1)
 
 # Load saved PATH first (if it exists)
 if test -f ~/.whi/saved_path_fish

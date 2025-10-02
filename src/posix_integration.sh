@@ -1,4 +1,4 @@
-# whi shell integration for bash/zsh (v0.4.0)
+# whi shell integration for bash/zsh (v0.4.1)
 
 # Load saved PATH first (if it exists)
 # Detect shell and load the appropriate saved_path file
@@ -13,11 +13,11 @@ __whi_apply_path() {
     shift
     local new_path
     new_path=$(command whi "__${subcmd}" "$@")
-    local status=$?
-    if [ $status -eq 0 ]; then
+    local exit_code=$?
+    if [ $exit_code -eq 0 ]; then
         export PATH="$new_path"
     else
-        return $status
+        return $exit_code
     fi
 }
 
