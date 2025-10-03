@@ -35,17 +35,37 @@ The snippet:
 
 All of these operate on the current shell session. Each command prints the updated `PATH`; the integration captures the string and updates `PATH` for you.
 
+### Querying executables
+
 ```bash
-# Which like usage
-whi cargo
+whi cargo                    # show the first match (with PATH index)
 whi -n cargo                 # no index, same output which gives
-whi -a cargo                 # shorthand: whia
-whi -an cargo
+whi -a cargo                 # show all matches (shorthand: whia)
+whi -an cargo                # all matches, no index
 
 # Show full path (line separated)
-whi -f
-whi -fn
+whi -f                       # list all PATH entries
+whi -fn                      # list all PATH entries, no index
 
+# This is cool ... list all matches, newline, list full path
+# with all path entries containing the binary highlighted
+whi --full cargo
+```
+
+Useful flags:
+- `-a/--all`
+- `-f/--full`
+- `-l/--follow-symlinks`
+- `-s/--stat`
+- `-0/--print0`
+- `-q/--quiet`
+- `--silent`
+- `--color <auto|never|always>`
+- `--path <PATH>`
+
+### PATH manipulation
+
+```bash
 # Prefer: make an executable win (or add a path)
 # The Swiss Army knife - works with index, path, or fuzzy pattern
 # Makes minimal changes to achieve the goal
@@ -68,7 +88,11 @@ whi clean
 whi delete 3 9               # specific indices
 whi delete ~/.local/bin      # exact path
 whi delete build temp        # fuzzy - all paths matching pattern
+```
 
+### History & state management
+
+```bash
 # Undo/redo/reset PATH changes
 whi undo                     # undo last operation
 whi undo 3                   # undo last 3 operations
@@ -79,7 +103,11 @@ whi reset                    # reset to initial session state
 # Inspect PATH changes
 whi diff                     # show changes since session start
 whi diff full                # show all entries (including unchanged)
+```
 
+### Persistence & profiles
+
+```bash
 # Persist PATH to shell config files
 whi apply                    # save to current shell's config
 whi apply fish               # save to specific shell
@@ -93,35 +121,68 @@ whi list                     # list all saved profiles
 whi rmp work                 # remove profile "work"
 ```
 
+### Virtual environments (venv)
+
+`whi` can create project-specific PATH environments similar to Python virtualenvs or direnv, but for PATH management. This is perfect for projects that need specific tool versions or custom PATH configurations.
+
+```bash
+# Create whi.file from current PATH (like requirements.txt for PATH)
+whi file                     # create whi.file in current directory
+whi file -f                  # force overwrite existing whi.file
+
+# Activate venv (read whi.file and switch PATH)
+whi source                   # activate venv from ./whi.file
+# Shell shows: [dirname] user@host:~/project $
+
+# Exit venv (restore previous PATH)
+whi exit                     # deactivate and restore PATH
+```
+
+**How it works:**
+- `whi file` snapshots your current PATH into a `whi.file` in the current directory
+- `whi source` reads `whi.file` and replaces your PATH (saves old PATH for restore)
+- `whi exit` restores your previous PATH
+- Your shell prompt shows `[venv-name]` when active (like Python venvs)
+- All PATH operations (`prefer`, `move`, `delete`, etc.) work normally inside venvs
+- Venv state is session-specific (different terminals = different venv states)
+
+**Use cases:**
+- Lock tool versions per project (e.g., specific Node, Python, Ruby versions)
+- Isolate project-specific binaries from global PATH
+- Test PATH configurations before applying globally
+- Share reproducible development environments via version control
+
+**Auto-activation:**
+You can enable auto-activation in `~/.whi/config.toml`:
+```toml
+[venv]
+auto_activate_file = true  # automatically source whi.file when entering directories
+```
+
+When enabled, the shell integration will automatically activate venvs when you `cd` into directories containing `whi.file`.
+
+**whi.file format:**
+The file uses a simple human-friendly format:
+```
+PATH!
+/usr/local/bin
+/usr/bin
+/bin
+
+ENV!
+KEY=value
+ANOTHER=value
+```
+
+Each path is on its own line under the `PATH!` section. You can manually edit these files. The `ENV!` section is reserved for future use (environment variables).
+
 ### Shell prompt behaviour
 
 - bash & zsh: whi prepends "[name]" to your existing prompt.
 - fish: the marker appears in the right-hand prompt, and any prior `fish_right_prompt` output still runs before it.
 - Prompt frameworks (Starship, powerlevel10k, etc.) keep their formatting. Adjust your prompt or redefine `__whi_prompt` if you want a different placement.
 
-### Querying executables
-
-```bash
-whi node                     # show the first match (with PATH index)
-whi --all node               # list every match
-
-# This is cool ... list all matches, newline, list full path
-# with all path entries containing the binary highlighted
-whi --full cargo
-```
-
-Useful flags:
-- `-a/--all`
-- `-f/--full`
-- `-l/--follow-symlinks`
-- `-s/--stat`
-- `-0/--print0`
-- `-q/--quiet`
-- `--silent`
-- `--color <auto|never|always>`
-- `--path <PATH>`
-
-`whi --help` shows the verbs (`prefer`, `move`, `switch`, `clean`, `delete`, `undo`, `redo`, `reset`, `diff`, `apply`, `save`, `load`, `list`, `rmp`). The integration intercepts those public names and rewrites them to the hidden `__…` subcommands that actually mutate the environment.
+`whi --help` shows the verbs (`prefer`, `move`, `switch`, `clean`, `delete`, `undo`, `redo`, `reset`, `diff`, `apply`, `save`, `load`, `list`, `rmp`, `file`, `source`, `exit`). The integration intercepts those public names and rewrites them to the hidden `__…` subcommands that actually mutate the environment.
 
 ## Helper Shortcuts
 
@@ -155,9 +216,13 @@ Use whichever spelling you prefer—both routes converge in Rust.
 
 - **Profile storage** lives in `~/.whi/profiles/`. Each profile is a file in the same human-friendly format as saved PATH files. Use `whi save <name>` to save current PATH as a profile, `whi load <name>` to restore it, and `whi list` to see all profiles. You can manually edit these files - just list one path per line under the `PATH!` section.
 
-- **Session snapshots** live in `${XDG_RUNTIME_DIR:-/tmp}/whi-<uid>/session_<ppid>.log`. Each PATH modification writes a snapshot (timestamp + full PATH string). The undo/redo system navigates through these snapshots with a cursor. Sessions keep up to 500 snapshots (initial + last 499) and auto-cleanup old sessions after 24 hours.
+- **Configuration** lives in `~/.whi/config.toml`. Auto-created on first run with defaults. Controls venv auto-activation and protected paths (preserved during `whi apply` to prevent breaking your shell).
 
-- **Undo cursor** lives in `${XDG_RUNTIME_DIR:-/tmp}/whi-<uid>/session_<ppid>.cursor`. Tracks your position in the snapshot history. No cursor file means you're at the latest state.
+- **Session snapshots** live in `${XDG_RUNTIME_DIR:-/tmp}/whi-<uid>/session_<ppid>.log` (or `session_<ppid>/<venv-dir-hash>.log` when in a venv). Each PATH modification writes a snapshot (timestamp + full PATH string). The undo/redo system navigates through these snapshots with a cursor. Sessions keep up to 500 snapshots (initial + last 499) and auto-cleanup old sessions after 24 hours.
+
+- **Undo cursor** lives in `${XDG_RUNTIME_DIR:-/tmp}/whi-<uid>/session_<ppid>.cursor` (or `session_<ppid>/<venv-dir-hash>.cursor` when in a venv). Tracks your position in the snapshot history. No cursor file means you're at the latest state.
+
+- **Venv state** (when active) is stored in `${XDG_RUNTIME_DIR:-/tmp}/whi-<uid>/session_<ppid>/venv_restore` (PATH to restore on exit) and `venv_dir` (venv directory path). This is session-specific - each terminal has independent venv state.
 
 ## How undo/redo works
 
