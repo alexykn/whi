@@ -403,25 +403,50 @@ end
 if not set -q __whi_prompt_installed
     set -g __whi_prompt_installed 1
 
-    if not functions -q __whi_original_fish_prompt
-        if functions -q fish_prompt
-            functions -c fish_prompt __whi_original_fish_prompt
-        else if functions -q fish_default_prompt
-            functions -c fish_default_prompt __whi_original_fish_prompt
-        else
-            function __whi_original_fish_prompt
-                set -l pwd (prompt_pwd)
-                printf '%s> ' $pwd
+    # Detect if using Starship or other prompt frameworks
+    if type -q starship
+        # Starship detected - use fish_right_prompt to avoid conflicts
+        if not functions -q __whi_original_fish_right_prompt
+            if functions -q fish_right_prompt
+                functions -c fish_right_prompt __whi_original_fish_right_prompt
+            else
+                function __whi_original_fish_right_prompt
+                    # Empty default
+                end
             end
         end
-    end
 
-    function fish_prompt
-        set -l last_status $status
-        set -l prefix (__whi_prompt)
-        printf '%s' $prefix
-        __whi_original_fish_prompt
-        return $last_status
+        function fish_right_prompt
+            set -l whi_part (__whi_prompt)
+            set -l orig (__whi_original_fish_right_prompt)
+            if test -n "$whi_part"
+                echo -n "$whi_part"
+            end
+            if test -n "$orig"
+                echo -n "$orig"
+            end
+        end
+    else
+        # No Starship - use traditional fish_prompt wrapping
+        if not functions -q __whi_original_fish_prompt
+            if functions -q fish_prompt
+                functions -c fish_prompt __whi_original_fish_prompt
+            else if functions -q fish_default_prompt
+                functions -c fish_default_prompt __whi_original_fish_prompt
+            else
+                function __whi_original_fish_prompt
+                    set -l pwd (prompt_pwd)
+                    printf '%s> ' $pwd
+                end
+            end
+        end
+
+        function fish_prompt
+            set -l last_status $status
+            echo -n (__whi_prompt)
+            __whi_original_fish_prompt
+            return $last_status
+        end
     end
 end
 

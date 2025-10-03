@@ -544,7 +544,11 @@ if [ -n "$BASH_VERSION" ]; then
                 ;;
             *)
                 if [ -n "${PROMPT_COMMAND:-}" ]; then
-                    case ";$PROMPT_COMMAND;" in *";__whi_prompt_command;"*) ;; *) PROMPT_COMMAND="${PROMPT_COMMAND};__whi_prompt_command" ;; esac
+                    # Use newline separator instead of semicolon to avoid ;; conflicts
+                    case "$PROMPT_COMMAND" in 
+                        *__whi_prompt_command*) ;;
+                        *) PROMPT_COMMAND="${PROMPT_COMMAND}"$'\n'"__whi_prompt_command" ;;
+                    esac
                 else
                     PROMPT_COMMAND="__whi_prompt_command"
                 fi
@@ -563,6 +567,7 @@ elif [ -n "$ZSH_VERSION" ]; then
         if [ -z "${__WHI_ZSH_BASE_PROMPT+x}" ]; then
             __WHI_ZSH_BASE_PROMPT="$current"
         fi
+        # Use %% to escape % and avoid prompt expansion, prepend as literal text
         PROMPT="${prefix}${__WHI_ZSH_BASE_PROMPT}"
         __WHI_ZSH_LAST_PROMPT="$PROMPT"
         return $last_status
