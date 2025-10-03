@@ -520,67 +520,100 @@ __whi_prompt() {
     fi
 }
 if [ -n "$BASH_VERSION" ]; then
-    __whi_prompt_command() {
-        local last_status=$?
-        local prefix="$(__whi_prompt)"
-        local current="${PS1-}"
-        if [ "${__WHI_LAST_PROMPT_VALUE-}" != "$current" ]; then
-            __WHI_BASH_BASE_PROMPT="$current"
-        fi
-        if [ -z "${__WHI_BASH_BASE_PROMPT+x}" ]; then
-            __WHI_BASH_BASE_PROMPT="$current"
-        fi
-        PS1="${prefix}${__WHI_BASH_BASE_PROMPT}"
-        __WHI_LAST_PROMPT_VALUE="$PS1"
-        return $last_status
-    }
+    # Detect prompt framework
+    if command -v starship >/dev/null 2>&1 && [[ "${PROMPT_COMMAND:-}" == *starship* ]]; then
+        # Starship: Just set env vars, user should add to starship.toml:
+        # [env_var.WHI_VENV_NAME]
+        # variable = "WHI_VENV_NAME"
+        # format = "[$env_value]($style) "
+        :  # Do nothing, env vars are already set
+    elif command -v oh-my-posh >/dev/null 2>&1 && [[ "${PROMPT_COMMAND:-}" == *oh-my-posh* ]]; then
+        # Oh My Posh: Similar to Starship, uses env vars
+        :  # Do nothing, env vars are already set
+    else
+        # No framework detected, use traditional PS1 wrapping
+        __whi_prompt_command() {
+            local last_status=$?
+            local prefix="$(__whi_prompt)"
+            local current="${PS1-}"
+            if [ "${__WHI_LAST_PROMPT_VALUE-}" != "$current" ]; then
+                __WHI_BASH_BASE_PROMPT="$current"
+            fi
+            if [ -z "${__WHI_BASH_BASE_PROMPT+x}" ]; then
+                __WHI_BASH_BASE_PROMPT="$current"
+            fi
+            PS1="${prefix}${__WHI_BASH_BASE_PROMPT}"
+            __WHI_LAST_PROMPT_VALUE="$PS1"
+            return $last_status
+        }
 
-    if [ -z "${__WHI_PROMPT_INSTALLED:-}" ]; then
-        __WHI_PROMPT_INSTALLED=1
-        __whi_prompt_decl=$(declare -p PROMPT_COMMAND 2>/dev/null || printf '')
-        case "$__whi_prompt_decl" in
-            declare\ -a*)
-                case " ${PROMPT_COMMAND[*]} " in *" __whi_prompt_command "*) ;; *) PROMPT_COMMAND+=("__whi_prompt_command") ;; esac
-                ;;
-            *)
-                if [ -n "${PROMPT_COMMAND:-}" ]; then
-                    # Use newline separator instead of semicolon to avoid ;; conflicts
-                    case "$PROMPT_COMMAND" in 
-                        *__whi_prompt_command*) ;;
-                        *) PROMPT_COMMAND="${PROMPT_COMMAND}"$'\n'"__whi_prompt_command" ;;
-                    esac
-                else
-                    PROMPT_COMMAND="__whi_prompt_command"
-                fi
-                ;;
-        esac
-        unset __whi_prompt_decl
+        if [ -z "${__WHI_PROMPT_INSTALLED:-}" ]; then
+            __WHI_PROMPT_INSTALLED=1
+            __whi_prompt_decl=$(declare -p PROMPT_COMMAND 2>/dev/null || printf '')
+            case "$__whi_prompt_decl" in
+                declare\ -a*)
+                    case " ${PROMPT_COMMAND[*]} " in *" __whi_prompt_command "*) ;; *) PROMPT_COMMAND+=("__whi_prompt_command") ;; esac
+                    ;;
+                *)
+                    if [ -n "${PROMPT_COMMAND:-}" ]; then
+                        # Use newline separator instead of semicolon to avoid ;; conflicts
+                        case "$PROMPT_COMMAND" in 
+                            *__whi_prompt_command*) ;;
+                            *) PROMPT_COMMAND="${PROMPT_COMMAND}"$'\n'"__whi_prompt_command" ;;
+                        esac
+                    else
+                        PROMPT_COMMAND="__whi_prompt_command"
+                    fi
+                    ;;
+            esac
+            unset __whi_prompt_decl
+        fi
     fi
 elif [ -n "$ZSH_VERSION" ]; then
-    __whi_precmd_prompt() {
-        local last_status=$?
-        local prefix="$(__whi_prompt)"
-        local current="$PROMPT"
-        if [ "${__WHI_ZSH_LAST_PROMPT-}" != "$current" ]; then
-            __WHI_ZSH_BASE_PROMPT="$current"
-        fi
-        if [ -z "${__WHI_ZSH_BASE_PROMPT+x}" ]; then
-            __WHI_ZSH_BASE_PROMPT="$current"
-        fi
-        # Use %% to escape % and avoid prompt expansion, prepend as literal text
-        PROMPT="${prefix}${__WHI_ZSH_BASE_PROMPT}"
-        __WHI_ZSH_LAST_PROMPT="$PROMPT"
-        return $last_status
-    }
+    # Detect prompt framework
+    if command -v starship >/dev/null 2>&1 && [[ "$(typeset -f precmd 2>/dev/null)" == *starship* ]]; then
+        # Starship: Just set env vars, user should add to starship.toml
+        :  # Do nothing, env vars are already set
+    elif command -v oh-my-posh >/dev/null 2>&1 && [[ "$(typeset -f precmd 2>/dev/null)" == *oh-my-posh* ]]; then
+        # Oh My Posh: Uses env vars
+        :  # Do nothing, env vars are already set
+    elif [[ -n "${POWERLEVEL9K_VERSION:-}${POWERLEVEL10K_VERSION:-}" ]] || [[ "${ZSH_THEME:-}" == *powerlevel* ]]; then
+        # Powerlevel10k/9k: Add custom segment
+        # User should add to .p10k.zsh: POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS+=whi_venv
+        typeset -g POWERLEVEL9K_WHI_VENV_FOREGROUND=yellow
+        function prompt_whi_venv() {
+            local venv_text="$(__whi_prompt)"
+            if [[ -n "$venv_text" ]]; then
+                p10k segment -f $POWERLEVEL9K_WHI_VENV_FOREGROUND -t "$venv_text"
+            fi
+        }
+    else
+        # No framework detected, use traditional PROMPT wrapping
+        __whi_precmd_prompt() {
+            local last_status=$?
+            local prefix="$(__whi_prompt)"
+            local current="$PROMPT"
+            if [ "${__WHI_ZSH_LAST_PROMPT-}" != "$current" ]; then
+                __WHI_ZSH_BASE_PROMPT="$current"
+            fi
+            if [ -z "${__WHI_ZSH_BASE_PROMPT+x}" ]; then
+                __WHI_ZSH_BASE_PROMPT="$current"
+            fi
+            # Use %% to escape % and avoid prompt expansion, prepend as literal text
+            PROMPT="${prefix}${__WHI_ZSH_BASE_PROMPT}"
+            __WHI_ZSH_LAST_PROMPT="$PROMPT"
+            return $last_status
+        }
 
-    if [ -z "${__WHI_PROMPT_INSTALLED:-}" ]; then
-        __WHI_PROMPT_INSTALLED=1
-        autoload -Uz add-zsh-hook 2>/dev/null
-        if typeset -f add-zsh-hook >/dev/null 2>&1; then
-            add-zsh-hook precmd __whi_precmd_prompt 2>/dev/null || case " ${precmd_functions[*]:-} " in *" __whi_precmd_prompt "*) ;; *) precmd_functions+=(__whi_precmd_prompt) ;; esac
-        else
-            typeset -ga precmd_functions 2>/dev/null
-            case " ${precmd_functions[*]:-} " in *" __whi_precmd_prompt "*) ;; *) precmd_functions+=(__whi_precmd_prompt) ;; esac
+        if [ -z "${__WHI_PROMPT_INSTALLED:-}" ]; then
+            __WHI_PROMPT_INSTALLED=1
+            autoload -Uz add-zsh-hook 2>/dev/null
+            if typeset -f add-zsh-hook >/dev/null 2>&1; then
+                add-zsh-hook precmd __whi_precmd_prompt 2>/dev/null || case " ${precmd_functions[*]:-} " in *" __whi_precmd_prompt "*) ;; *) precmd_functions+=(__whi_precmd_prompt) ;; esac
+            else
+                typeset -ga precmd_functions 2>/dev/null
+                case " ${precmd_functions[*]:-} " in *" __whi_precmd_prompt "*) ;; *) precmd_functions+=(__whi_precmd_prompt) ;; esac
+            fi
         fi
     fi
 fi
