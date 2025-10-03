@@ -70,6 +70,59 @@ The compiled binary will be at `./target/release/whi`.
 5. **Shell integration**: PATH manipulation outputs new PATH string; shell functions apply it to current session
 6. **Manual argument parsing**: No clap/structopt to minimize dependencies
 
+### Shell Integration Behaviour
+
+Claude often misinterprets how `whi` works without the shell hooks, so keep these points in mind:
+
+#### Why the integration is mandatory
+- The Rust binary cannot mutate the parent shell environment on its own. Only the shell script (bash/zsh/fish) that invoked `whi` can export variables into the live session.
+- The integration snippets export `WHI_SHELL_INITIALIZED=1` once they have finished wiring up helper functions and capturing the initial `PATH`. The binary treats this flag as proof that the integration is installed and it is safe to perform mutations.
+- Every public verb that would change state calls `check_shell_integration()` first. If the flag is missing, the command prints integration instructions and exits with status `2`, intentionally making the verb a no-op.
+
+#### Command categories
+- **Guarded public commands:** Every entry point except `whi help` invokes `check_shell_integration()` immediately. That includes read-only queries (`whi <name>`, `--all`, `diff`, etc.) as well as mutation verbs. The goal is to give a single, consistent error message when the integration is missing.
+- **Mutation verbs** (`prefer`, `move`, `switch`, `clean`, `delete`, `reset`, `undo`, `redo`, `load`, `list`, `save`, `apply`, `source`, `exit`, and variants that touch venv/session state) still rely on the integration to apply their effects, so they do nothing until `WHI_SHELL_INITIALIZED` is detected.
+- **Hidden plumbing commands** (all `__*` subcommands like `__prefer`, `__move`, `__venv_source`, etc.) are invoked only by the shell integration. They assume the environment is trusted and therefore skip the guard.
+
+#### Execution flow at runtime
+1. You type `whi <verb>` in a configured shell.
+2. The integration-defined shell function `whi()` intercepts the call. For verbs that change PATH or venv state it rewrites the invocation to the matching hidden subcommand.
+3. The function runs the binary (`__whi_exec __<verb> ...`) and captures stdout/stderr.
+4. Hidden commands return a transition description (tab-separated lines prefixed with `PATH`, `SET`, `UNSET`).
+5. The shell function parses that transition and applies the exports/unsets inside the current shell session.
+
+Because steps 2–5 never happen without the integration, the public verbs implement a belt-and-suspenders guard via `check_shell_integration()` so that direct CLI calls do not mislead users.
+
+#### Mapping public verbs to hidden implementations
+
+| User-facing verb | Hidden subcommand used by integration | Rust entry point | Result
+| ---------------- | ------------------------------------- | ---------------- | ------ |
+| `whi prefer` / `whip` | `__prefer` | `run_hidden_prefer()` | Reorder PATH so the named executable wins |
+| `whi move` / `whim` | `__move` | `run_hidden_move()` | Move PATH entry between indices |
+| `whi switch` / `whis` | `__switch` | `run_hidden_swap()` | Swap two PATH entries |
+| `whi clean` / `whic` | `__clean` | `run_hidden_clean()` | Remove duplicate PATH entries |
+| `whi delete` / `whid` | `__delete` | `run_hidden_delete()` | Delete PATH entries by index/path/pattern |
+| `whi reset` | `__reset` | `run_hidden_reset()` | Restore PATH to session baseline |
+| `whi undo` / `whiu` | `__undo` | `run_hidden_undo()` | Step backward through session history |
+| `whi redo` / `whir` | `__redo` | `run_hidden_redo()` | Step forward through session history |
+| `whi load` / `whil` | `__load` | `run_hidden_load()` | Load PATH from saved profile |
+| `whi source` | `__venv_source` | `run_hidden_venv_source()` | Activate venv described by `whi.file`/`whi.lock` |
+| `whi exit` | `__venv_exit` | `run_hidden_venv_exit()` | Exit active venv and restore previous PATH |
+| Prompt helpers, auto-activation checks | `__init`, `__should_auto_activate`, `__load_saved_path` | Dedicated `run_hidden_*` fns | Manage session bookkeeping |
+
+Additional verbs such as `apply`, `save`, `list`, `remove-profile`, `file`, and `diff` run through their public code paths (no hidden wrapper), but they still invoke `check_shell_integration()` before doing any work. They need the integration because they rely on session state captured by the shell hooks (e.g., in-venv detection, saved baseline `PATH`, prompt markers) even though they do not emit tab-delimited transitions.
+
+> The shell integration also provides aliases (`whip`, `whim`, etc.) that ultimately call the same hidden commands, so the table above covers both spellings.
+
+#### Concrete example: `whi source`
+- `whi source` in a configured shell triggers the `whi()` shell function. After basic validation it calls `__whi_venv_source "$PWD"`.
+- `__whi_venv_source` executes `whi __venv_source <path>` which enters `Command::HiddenVenvSource` and calls `run_hidden_venv_source()`.
+- `run_hidden_venv_source()` delegates to `whi::venv_manager::source_from_path()`, producing a `VenvTransition` object.
+- The Rust helper prints the transition lines. The shell function reads them and exports the new `PATH`, `WHI_VENV_*` markers, etc. The user’s shell session now reflects the venv.
+- If the integration were missing, the public `whi source` arm would stop at `check_shell_integration()` and exit with code `2`, so no misleading “success” occurs.
+
+The same pattern applies to `whi exit` and every other mutating verb: public variants exist largely for UX/help output, while the hidden variants (plus the tab-delimited transition protocol) do the actual environment mutation once the integration is active.
+
 ### PATH Manipulation Flow
 
 The `--move`, `--swap`, and `--prefer` operations follow this pattern:
