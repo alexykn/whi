@@ -9,7 +9,7 @@ use std::os::unix::fs::DirBuilderExt;
 use crate::atomic_file::AtomicFile;
 use crate::history::HistoryContext;
 
-const WHI_FILE: &str = "whi.file";
+const WHI_FILE: &str = "whifile";
 
 #[derive(Debug, Clone)]
 pub struct VenvTransition {
@@ -110,17 +110,17 @@ fn clear_venv_info(session_pid: u32) {
     }
 }
 
-/// Create whi.file from current PATH
+/// Create whifile from current PATH
 pub fn create_file(force: bool) -> io::Result<()> {
     use crate::path_file::format_path_file;
 
     let whi_file = Path::new(WHI_FILE);
 
-    // Check for existing whi.file
+    // Check for existing whifile
     if whi_file.exists() && !force {
         return Err(io::Error::new(
             io::ErrorKind::AlreadyExists,
-            "whi.file already exists. Use -f/--force to replace it",
+            "whifile already exists. Use -f/--force to replace it",
         ));
     }
 
@@ -136,7 +136,7 @@ pub fn create_file(force: bool) -> io::Result<()> {
     atomic_file.commit()?;
 
     let entries = path_var.split(':').filter(|s| !s.is_empty()).count();
-    println!("Saved PATH to ./whi.file ({entries} entries)");
+    println!("Saved PATH to ./whifile ({entries} entries)");
 
     Ok(())
 }
@@ -159,7 +159,7 @@ pub fn source_from_path(dir_path: &str) -> io::Result<VenvTransition> {
     let path_file = if whi_file.exists() {
         whi_file
     } else {
-        return Err(io::Error::new(io::ErrorKind::NotFound, "No whi.file found"));
+        return Err(io::Error::new(io::ErrorKind::NotFound, "No whifile found"));
     };
 
     // Read and parse PATH from file
@@ -199,7 +199,7 @@ pub fn source_from_path(dir_path: &str) -> io::Result<VenvTransition> {
     })
 }
 
-/// Source venv from pwd (whi.file) - convenience wrapper
+/// Source venv from pwd (whifile) - convenience wrapper
 pub fn source() -> io::Result<VenvTransition> {
     let pwd = env::current_dir()?;
     source_from_path(&pwd.to_string_lossy())

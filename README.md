@@ -126,12 +126,12 @@ whi rmp work                 # remove profile "work"
 `whi` can create project-specific PATH environments similar to Python virtualenvs or direnv, but for PATH management. This is perfect for projects that need specific tool versions or custom PATH configurations.
 
 ```bash
-# Create whi.file from current PATH (like requirements.txt for PATH)
-whi file                     # create whi.file in current directory
-whi file -f                  # force overwrite existing whi.file
+# Create whifile from current PATH (like requirements.txt for PATH)
+whi file                     # create whifile in current directory
+whi file -f                  # force overwrite existing whifile
 
-# Activate venv (read whi.file and switch PATH)
-whi source                   # activate venv from ./whi.file
+# Activate venv (read whifile and switch PATH)
+whi source                   # activate venv from ./whifile
 # Shell shows: [dirname] user@host:~/project $
 
 # Exit venv (restore previous PATH)
@@ -139,8 +139,8 @@ whi exit                     # deactivate and restore PATH
 ```
 
 **How it works:**
-- `whi file` snapshots your current PATH into a `whi.file` in the current directory
-- `whi source` reads `whi.file` and replaces your PATH (saves old PATH for restore)
+- `whi file` snapshots your current PATH into a `whifile` in the current directory
+- `whi source` reads `whifile` and replaces your PATH (saves old PATH for restore)
 - `whi exit` restores your previous PATH
 - Your shell prompt shows `[venv-name]` when active (like Python venvs)
 - All PATH operations (`prefer`, `move`, `delete`, etc.) work normally inside venvs
@@ -156,12 +156,12 @@ whi exit                     # deactivate and restore PATH
 You can enable auto-activation in `~/.whi/config.toml`:
 ```toml
 [venv]
-auto_activate_file = true  # automatically source whi.file when entering directories
+auto_activate_file = true  # automatically source whifile when entering directories
 ```
 
-When enabled, the shell integration will automatically activate venvs when you `cd` into directories containing `whi.file`.
+When enabled, the shell integration will automatically activate venvs when you `cd` into directories containing `whifile`.
 
-**whi.file format:**
+**whifile format:**
 The file uses a simple human-friendly format:
 ```
 PATH!
@@ -212,7 +212,7 @@ Use whichever spelling you prefer—both routes converge in Rust.
 
 ## Persistence & State
 
-- **Saved PATH files** live in `~/.whi/` (`saved_path_bash`, `saved_path_zsh`, `saved_path_fish`). `whi apply all` writes to all three. Each save creates a `*.bak` backup before overwriting. Files use a human-friendly format with `PATH!` and `ENV!` sections (one path per line). Legacy colon-separated files from pre-0.5.0 are automatically detected and supported for backward compatibility.
+- **Saved PATH files** live in `~/.whi/` (`saved_path_bash`, `saved_path_zsh`, `saved_path_fish`). `whi apply all` writes to all three. Each save creates a `*.bak` backup before overwriting. Files use a human-friendly format with `PATH!` and `ENV!` sections (one path per line). Legacy colon-separated files from pre-0.5.1 are automatically detected and supported for backward compatibility.
 
 - **Profile storage** lives in `~/.whi/profiles/`. Each profile is a file in the same human-friendly format as saved PATH files. Use `whi save <name>` to save current PATH as a profile, `whi load <name>` to restore it, and `whi list` to see all profiles. You can manually edit these files - just list one path per line under the `PATH!` section.
 

@@ -101,9 +101,9 @@ enum Command {
     /// Remove a saved profile
     #[command(name = "rmp")]
     RemoveProfile(RemoveProfileArgs),
-    /// Create whi.file from current PATH
+    /// Create whifile from current PATH
     File(FileArgs),
-    /// Activate venv from whi.file
+    /// Activate venv from whifile
     Source,
     /// Exit active venv
     Exit,
@@ -257,7 +257,7 @@ struct HiddenLoadSavedPathArgs {
 
 #[derive(Clone, Copy, ClapArgs, Debug, Default)]
 struct FileArgs {
-    /// Force overwriting existing whi.file with current PATH
+    /// Force overwriting existing whifile with current PATH
     #[arg(short = 'f', long = "force")]
     force: bool,
 }

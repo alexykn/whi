@@ -1,4 +1,4 @@
-# whi shell integration for fish (v0.5.0)
+# whi shell integration for fish (v0.5.1)
 
 # Absolute path to the whi binary is injected by `whi init`
 set -gx __WHI_BIN "__WHI_BIN__"
@@ -170,7 +170,7 @@ function __whi_cd_hook --on-variable PWD
 
     # Check if we should auto-activate or auto-deactivate
     set -l has_file 0
-    test -f "$PWD/whi.file"; and set has_file 1
+    test -f "$PWD/whifile"; and set has_file 1
 
     # If already in a venv, check if we left that directory
     if test -n "$WHI_VENV_DIR"
@@ -434,7 +434,7 @@ function whi
             case source
                 if test (count $argv) -ge 2; and contains -- $argv[2] help --help -h
                     echo "Usage: whi source"
-                    echo "  Activate venv from whi.file in current directory"
+                    echo "  Activate venv from whifile in current directory"
                     return 0
                 end
                 if test (count $argv) -ne 1

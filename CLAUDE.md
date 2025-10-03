@@ -106,7 +106,7 @@ Because steps 2–5 never happen without the integration, the public verbs imple
 | `whi undo` / `whiu` | `__undo` | `run_hidden_undo()` | Step backward through session history |
 | `whi redo` / `whir` | `__redo` | `run_hidden_redo()` | Step forward through session history |
 | `whi load` / `whil` | `__load` | `run_hidden_load()` | Load PATH from saved profile |
-| `whi source` | `__venv_source` | `run_hidden_venv_source()` | Activate venv described by `whi.file`/`whi.lock` |
+| `whi source` | `__venv_source` | `run_hidden_venv_source()` | Activate venv described by `whifile`/`whi.lock` |
 | `whi exit` | `__venv_exit` | `run_hidden_venv_exit()` | Exit active venv and restore previous PATH |
 | Prompt helpers, auto-activation checks | `__init`, `__should_auto_activate`, `__load_saved_path` | Dedicated `run_hidden_*` fns | Manage session bookkeeping |
 

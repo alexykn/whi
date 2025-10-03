@@ -119,7 +119,7 @@ fn generate_default_config() -> String {
         .join(",\n");
 
     format!(
-        "# whi configuration file\n# This file is automatically created with default values\n\n[venv]\n# Auto-activate whi.file when entering directory (default: {auto_file})\nauto_activate_file = {auto_file}\n\n[protected]\n# Protected paths are preserved during 'whi apply' even if deleted in session\n# This prevents breaking your shell by accidentally saving a minimal PATH\npaths = [\n{paths}\n]\n",
+        "# whi configuration file\n# This file is automatically created with default values\n\n[venv]\n# Auto-activate whifile when entering directory (default: {auto_file})\nauto_activate_file = {auto_file}\n\n[protected]\n# Protected paths are preserved during 'whi apply' even if deleted in session\n# This prevents breaking your shell by accidentally saving a minimal PATH\npaths = [\n{paths}\n]\n",
         auto_file = defaults.venv.auto_activate_file,
         paths = path_entries
     )

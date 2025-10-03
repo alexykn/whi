@@ -1,4 +1,4 @@
-# whi shell integration for bash/zsh (v0.5.0)
+# whi shell integration for bash/zsh (v0.5.1)
 
 # Absolute path to the whi binary is injected by `whi init`
 __WHI_BIN="__WHI_BIN__"
@@ -527,7 +527,7 @@ whi() {
                 case "$1" in
                     help|--help|-h)
                         echo "Usage: whi source"
-                        echo "  Activate venv from whi.file in current directory"
+                        echo "  Activate venv from whifile in current directory"
                         return 0
                         ;;
                 esac
@@ -686,7 +686,7 @@ __whi_cd_hook() {
     fi
 
     local has_file=0
-    [ -f "$current_pwd/whi.file" ] && has_file=1
+    [ -f "$current_pwd/whifile" ] && has_file=1
 
     local file_changed=1
     if [ -n "${__WHI_LAST_HAS_FILE+x}" ] && [ "${__WHI_LAST_HAS_FILE:-0}" -eq "$has_file" ]; then

@@ -28,7 +28,7 @@ pub fn format_path_file(path: &str) -> String {
 
 /// Parse PATH file - supports both new (PATH!/ENV!) and legacy (colon-separated) formats
 ///
-/// This provides backward compatibility with `saved_path` and profile files from pre-0.5.0 releases.
+/// This provides backward compatibility with `saved_path` and profile files from pre-0.5.1 releases.
 pub fn parse_path_file(content: &str) -> Result<String, String> {
     let trimmed = content.trim();
 
@@ -177,7 +177,7 @@ ENV!
 
     #[test]
     fn test_parse_legacy_format_single_line() {
-        // Legacy format from pre-0.5.0 releases
+        // Legacy format from pre-0.5.1 releases
         let content = "/usr/bin:/bin:/usr/local/bin";
         let path = parse_path_file(content).unwrap();
         assert_eq!(path, "/usr/bin:/bin:/usr/local/bin");
@@ -208,7 +208,7 @@ ENV!
 
     #[test]
     fn test_backward_compatibility_upgrade() {
-        // Simulates upgrading from 0.4.x to 0.5.0
+        // Simulates upgrading from 0.4.x to 0.5.1
         // Old saved_path file has legacy format, should still work
         let legacy_content = "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin";
         let parsed = parse_path_file(legacy_content).unwrap();
