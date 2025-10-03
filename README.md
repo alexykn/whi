@@ -93,6 +93,12 @@ whi list                     # list all saved profiles
 whi rmp work                 # remove profile "work"
 ```
 
+### Shell prompt behaviour
+
+- bash & zsh: whi prepends "[name]" to your existing prompt.
+- fish: the marker appears in the right-hand prompt, and any prior `fish_right_prompt` output still runs before it.
+- Prompt frameworks (Starship, powerlevel10k, etc.) keep their formatting. Adjust your prompt or redefine `__whi_prompt` if you want a different placement.
+
 ### Querying executables
 
 ```bash

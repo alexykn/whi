@@ -10,13 +10,6 @@ use crate::atomic_file::AtomicFile;
 use crate::history::HistoryContext;
 
 const WHI_FILE: &str = "whi.file";
-const WHI_LOCK: &str = "whi.lock";
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum VenvType {
-    File, // Editable
-    Lock, // Read-only
-}
 
 #[derive(Debug, Clone)]
 pub struct VenvTransition {
@@ -28,11 +21,6 @@ pub struct VenvTransition {
 /// Check if we're in a venv
 pub fn is_in_venv() -> bool {
     env::var("WHI_VENV_NAME").is_ok()
-}
-
-/// Check if in locked venv
-pub fn is_locked_venv() -> bool {
-    env::var("WHI_VENV_LOCKED").as_deref() == Ok("1")
 }
 
 /// Get session PID from environment
@@ -84,10 +72,6 @@ fn get_venv_restore_file(session_pid: u32) -> io::Result<PathBuf> {
 }
 
 /// Get venv type file path
-fn get_venv_type_file(session_pid: u32) -> io::Result<PathBuf> {
-    Ok(get_session_dir(session_pid)?.join("venv_type"))
-}
-
 /// Get venv dir file path
 fn get_venv_dir_file(session_pid: u32) -> io::Result<PathBuf> {
     Ok(get_session_dir(session_pid)?.join("venv_dir"))
@@ -107,19 +91,9 @@ fn restore_venv_path(session_pid: u32) -> io::Result<String> {
     Ok(path.trim().to_string())
 }
 
-/// Save venv info (type and directory)
-fn save_venv_info(session_pid: u32, venv_type: VenvType, dir: &Path) -> io::Result<()> {
-    let venv_type_file = get_venv_type_file(session_pid)?;
+/// Save venv info (directory)
+fn save_venv_info(session_pid: u32, dir: &Path) -> io::Result<()> {
     let venv_dir_file = get_venv_dir_file(session_pid)?;
-
-    fs::write(
-        venv_type_file,
-        match venv_type {
-            VenvType::File => "file",
-            VenvType::Lock => "lock",
-        },
-    )?;
-
     fs::write(venv_dir_file, dir.to_string_lossy().as_bytes())?;
 
     Ok(())
@@ -129,9 +103,6 @@ fn save_venv_info(session_pid: u32, venv_type: VenvType, dir: &Path) -> io::Resu
 fn clear_venv_info(session_pid: u32) -> io::Result<()> {
     if let Ok(restore_file) = get_venv_restore_file(session_pid) {
         let _ = fs::remove_file(restore_file);
-    }
-    if let Ok(type_file) = get_venv_type_file(session_pid) {
-        let _ = fs::remove_file(type_file);
     }
     if let Ok(dir_file) = get_venv_dir_file(session_pid) {
         let _ = fs::remove_file(dir_file);
@@ -144,15 +115,6 @@ pub fn create_file(force: bool) -> io::Result<()> {
     use crate::path_file::format_path_file;
 
     let whi_file = Path::new(WHI_FILE);
-    let whi_lock = Path::new(WHI_LOCK);
-
-    // Check for whi.lock
-    if whi_lock.exists() {
-        return Err(io::Error::new(
-            io::ErrorKind::AlreadyExists,
-            "Project is locked. Run 'whi unlock' first",
-        ));
-    }
 
     // Check for existing whi.file
     if whi_file.exists() && !force {
@@ -179,75 +141,6 @@ pub fn create_file(force: bool) -> io::Result<()> {
     Ok(())
 }
 
-/// Lock project: whi.file → whi.lock
-pub fn lock() -> io::Result<()> {
-    let whi_file = Path::new(WHI_FILE);
-    let whi_lock = Path::new(WHI_LOCK);
-
-    // Check if already locked first (before checking for whi.file)
-    if whi_lock.exists() {
-        println!("No changes made (already locked)");
-        return Ok(());
-    }
-
-    if !whi_file.exists() {
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            "No whi.file found. Run 'whi file' first",
-        ));
-    }
-
-    fs::rename(whi_file, whi_lock)?;
-    println!("Locked ./whi.file → ./whi.lock");
-
-    // If currently in venv, notify user
-    if is_in_venv() && !is_locked_venv() {
-        eprintln!("Exit and re-enter directory to activate locked mode.");
-    }
-
-    Ok(())
-}
-
-/// Unlock project: whi.lock → whi.file
-pub fn unlock() -> io::Result<Option<VenvTransition>> {
-    let whi_file = Path::new(WHI_FILE);
-    let whi_lock = Path::new(WHI_LOCK);
-
-    if !whi_lock.exists() {
-        return Err(io::Error::new(io::ErrorKind::NotFound, "No whi.lock found"));
-    }
-
-    if whi_file.exists() {
-        return Err(io::Error::new(
-            io::ErrorKind::AlreadyExists,
-            "whi.file already exists",
-        ));
-    }
-
-    fs::rename(whi_lock, whi_file)?;
-
-    // If we were inside a locked venv, update session info to editable mode
-    if is_in_venv() && is_locked_venv() {
-        let session_pid = get_session_pid();
-
-        if let Ok(dir) = env::var("WHI_VENV_DIR") {
-            let dir_path = Path::new(&dir);
-            save_venv_info(session_pid, VenvType::File, dir_path)?;
-        }
-
-        let current_path = env::var("PATH").unwrap_or_default();
-        let transition = VenvTransition {
-            new_path: current_path,
-            set_vars: vec![("WHI_VENV_LOCKED".to_string(), "0".to_string())],
-            unset_vars: Vec::new(),
-        };
-
-        return Ok(Some(transition));
-    }
-
-    Ok(None)
-}
-
 /// Source venv from specific path (used by shell integration)
 pub fn source_from_path(dir_path: &str) -> io::Result<VenvTransition> {
     use crate::path_file::parse_path_file;
@@ -262,18 +155,11 @@ pub fn source_from_path(dir_path: &str) -> io::Result<VenvTransition> {
 
     let dir = Path::new(dir_path);
     let whi_file = dir.join(WHI_FILE);
-    let whi_lock = dir.join(WHI_LOCK);
 
-    // Determine which file to source (lock takes precedence)
-    let (path_file, venv_type) = if whi_lock.exists() {
-        (whi_lock, VenvType::Lock)
-    } else if whi_file.exists() {
-        (whi_file, VenvType::File)
+    let path_file = if whi_file.exists() {
+        whi_file
     } else {
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            "No whi.file or whi.lock found",
-        ));
+        return Err(io::Error::new(io::ErrorKind::NotFound, "No whi.file found"));
     };
 
     // Read and parse PATH from file
@@ -295,7 +181,7 @@ pub fn source_from_path(dir_path: &str) -> io::Result<VenvTransition> {
     let session_pid = get_session_pid();
     let current_path = env::var("PATH").unwrap_or_default();
     save_venv_restore(session_pid, &current_path)?;
-    save_venv_info(session_pid, venv_type, dir)?;
+    save_venv_info(session_pid, dir)?;
 
     HistoryContext::venv(session_pid, dir)
         .and_then(|ctx| ctx.reset_with_initial(&new_path))
@@ -303,14 +189,6 @@ pub fn source_from_path(dir_path: &str) -> io::Result<VenvTransition> {
 
     let set_vars = vec![
         ("WHI_VENV_NAME".to_string(), venv_name),
-        (
-            "WHI_VENV_LOCKED".to_string(),
-            if venv_type == VenvType::Lock {
-                "1".to_string()
-            } else {
-                "0".to_string()
-            },
-        ),
         ("WHI_VENV_DIR".to_string(), dir.display().to_string()),
     ];
 
@@ -321,7 +199,7 @@ pub fn source_from_path(dir_path: &str) -> io::Result<VenvTransition> {
     })
 }
 
-/// Source venv from pwd (whi.file or whi.lock) - convenience wrapper
+/// Source venv from pwd (whi.file) - convenience wrapper
 pub fn source() -> io::Result<VenvTransition> {
     let pwd = env::current_dir()?;
     source_from_path(&pwd.to_string_lossy())
@@ -333,26 +211,13 @@ pub fn exit_venv() -> io::Result<VenvTransition> {
         return Err(io::Error::new(io::ErrorKind::NotFound, "Not in a venv"));
     }
 
-    // Check if locked venv requires cd exit (will be implemented with config)
-    if is_locked_venv() && should_require_cd_exit()? {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "Cannot exit locked environment (leave directory instead)",
-        ));
-    }
-
     let session_pid = get_session_pid();
     let restored_path = restore_venv_path(session_pid)?;
 
     // Clear venv info
     clear_venv_info(session_pid)?;
 
-    let unset_vars = vec![
-        "WHI_VENV_NAME".to_string(),
-        "WHI_VENV_LOCKED".to_string(),
-        "WHI_LOCKED_DIR".to_string(),
-        "WHI_VENV_DIR".to_string(),
-    ];
+    let unset_vars = vec!["WHI_VENV_NAME".to_string(), "WHI_VENV_DIR".to_string()];
 
     Ok(VenvTransition {
         new_path: restored_path,
@@ -371,30 +236,10 @@ pub fn update_restore_path(new_path: &str) -> io::Result<()> {
     save_venv_restore(session_pid, new_path)
 }
 
-/// Check if locked venv requires cd exit
-fn should_require_cd_exit() -> io::Result<bool> {
-    use crate::config::load_config;
-
-    match load_config() {
-        Ok(config) => Ok(config.venv.lock_require_cd_exit),
-        Err(_) => Ok(false), // Default to false on error
-    }
-}
-
-/// Check venv guard for modification operations
-pub fn check_venv_modification_allowed() -> Result<(), String> {
-    if is_locked_venv() {
-        Err("Cannot modify PATH in locked environment".to_string())
-    } else {
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::env;
-    use std::path::Path;
     use std::sync::{Mutex, OnceLock};
     use tempfile::TempDir;
 
@@ -429,79 +274,6 @@ mod tests {
     }
 
     #[test]
-    fn test_lock_unlock() {
-        let _guard = test_mutex().lock().unwrap();
-        let temp_dir = TempDir::new().unwrap();
-        let temp_path = temp_dir.path().to_path_buf();
-        env::set_current_dir(&temp_path).unwrap();
-        env::set_var("WHI_SESSION_PID", "12346");
-
-        // Lock without file should fail
-        assert!(lock().is_err());
-
-        // Create file and lock
-        env::set_var("PATH", "/usr/bin:/bin");
-        create_file(false).unwrap();
-        assert!(lock().is_ok());
-        assert!(!temp_path.join(WHI_FILE).exists());
-        assert!(temp_path.join(WHI_LOCK).exists());
-
-        // Lock again should be no-op (but succeed)
-        assert!(lock().is_ok());
-
-        // Unlock
-        env::remove_var("WHI_VENV_LOCKED"); // Not in venv
-        let unlock_result = unlock().unwrap();
-        assert!(unlock_result.is_none());
-        assert!(temp_path.join(WHI_FILE).exists());
-        assert!(!temp_path.join(WHI_LOCK).exists());
-
-        // Cleanup
-        env::remove_var("WHI_SESSION_PID");
-    }
-
-    #[test]
-    fn test_create_file_with_lock_present() {
-        let _guard = test_mutex().lock().unwrap();
-        let temp_dir = TempDir::new().unwrap();
-        let temp_path = temp_dir.path().to_path_buf();
-        env::set_current_dir(&temp_path).unwrap();
-        env::set_var("PATH", "/usr/bin:/bin");
-        env::set_var("WHI_SESSION_PID", "12347");
-
-        // Create whi.lock
-        fs::write(temp_path.join(WHI_LOCK), "/usr/bin").unwrap();
-
-        // Attempt to create whi.file should fail
-        let result = create_file(false);
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Project is locked"));
-
-        // Cleanup
-        env::remove_var("WHI_SESSION_PID");
-    }
-
-    #[test]
-    fn test_check_venv_modification_allowed() {
-        let _guard = test_mutex().lock().unwrap();
-        // Not in locked venv
-        env::remove_var("WHI_VENV_LOCKED");
-        assert!(check_venv_modification_allowed().is_ok());
-
-        // In locked venv
-        env::set_var("WHI_VENV_LOCKED", "1");
-        let result = check_venv_modification_allowed();
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("locked environment"));
-
-        // Cleanup
-        env::remove_var("WHI_VENV_LOCKED");
-    }
-
-    #[test]
     fn test_update_restore_path_refreshes_backup() {
         let _guard = test_mutex().lock().unwrap();
         let temp_dir = TempDir::new().unwrap();
@@ -526,38 +298,23 @@ mod tests {
     }
 
     #[test]
-    fn test_unlock_returns_transition_when_in_locked_env() {
+    fn test_source_from_path_reads_whi_file() {
         let _guard = test_mutex().lock().unwrap();
         let temp_dir = TempDir::new().unwrap();
         let xdg_before = env::var("XDG_RUNTIME_DIR").ok();
 
         env::set_var("XDG_RUNTIME_DIR", temp_dir.path());
         env::set_current_dir(temp_dir.path()).unwrap();
-
-        fs::write(WHI_LOCK, "PATH!\n/usr/bin\n\nENV!\n").unwrap();
-
-        env::set_var("WHI_VENV_NAME", "test-venv");
-        env::set_var("WHI_VENV_LOCKED", "1");
-        env::set_var("WHI_VENV_DIR", temp_dir.path());
         env::set_var("WHI_SESSION_PID", "7777");
-        env::set_var("PATH", "/foo:/bar");
+        env::set_var("PATH", "/usr/bin:/bin");
+        env::remove_var("WHI_VENV_NAME");
 
-        save_venv_restore(7777, "/restore:path").unwrap();
+        fs::write(WHI_FILE, "PATH!\n/usr/bin\n/bin\n\nENV!\n").unwrap();
 
-        let result = unlock().unwrap();
-        assert!(result.is_some());
-        let transition = result.unwrap();
-        assert_eq!(transition.new_path, "/foo:/bar");
-        assert_eq!(transition.set_vars.len(), 1);
-        assert_eq!(transition.set_vars[0].0, "WHI_VENV_LOCKED");
-        assert_eq!(transition.set_vars[0].1, "0");
-        assert!(transition.unset_vars.is_empty());
-
-        assert!(Path::new(WHI_FILE).exists());
-        assert!(!Path::new(WHI_LOCK).exists());
+        let transition = source_from_path(temp_dir.path().to_str().unwrap()).unwrap();
+        assert_eq!(transition.new_path, "/usr/bin:/bin");
 
         env::remove_var("WHI_VENV_NAME");
-        env::remove_var("WHI_VENV_LOCKED");
         env::remove_var("WHI_VENV_DIR");
         env::remove_var("WHI_SESSION_PID");
         env::remove_var("PATH");

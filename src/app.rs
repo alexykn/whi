@@ -121,10 +121,6 @@ pub fn run(args: &Args) -> i32 {
 
     // Handle load profile subcommand
     if let Some(profile_name) = &args.load_profile {
-        if let Err(e) = venv_manager::check_venv_modification_allowed() {
-            eprintln!("Error: {e}");
-            return 2;
-        }
         return handle_load_profile(profile_name);
     }
 
@@ -135,28 +131,16 @@ pub fn run(args: &Args) -> i32 {
 
     // Handle reset subcommand
     if args.reset {
-        if let Err(e) = venv_manager::check_venv_modification_allowed() {
-            eprintln!("Error: {e}");
-            return 2;
-        }
         return handle_reset();
     }
 
     // Handle undo subcommand
     if let Some(count) = args.undo_count {
-        if let Err(e) = venv_manager::check_venv_modification_allowed() {
-            eprintln!("Error: {e}");
-            return 2;
-        }
         return handle_undo(count);
     }
 
     // Handle redo subcommand
     if let Some(count) = args.redo_count {
-        if let Err(e) = venv_manager::check_venv_modification_allowed() {
-            eprintln!("Error: {e}");
-            return 2;
-        }
         return handle_redo(count);
     }
 
@@ -176,10 +160,6 @@ pub fn run(args: &Args) -> i32 {
 
     // Handle --clean operation
     if args.clean {
-        if let Err(e) = venv_manager::check_venv_modification_allowed() {
-            eprintln!("Error: {e}");
-            return 2;
-        }
         let (new_path, _removed_indices) = searcher.clean_duplicates();
         write_snapshot_safe(&new_path, args);
         return output_path(&mut out, &new_path);
@@ -187,37 +167,21 @@ pub fn run(args: &Args) -> i32 {
 
     // Handle --delete operation
     if !args.delete_targets.is_empty() {
-        if let Err(e) = venv_manager::check_venv_modification_allowed() {
-            eprintln!("Error: {e}");
-            return 2;
-        }
         return handle_delete(&searcher, &args.delete_targets, args, &mut out);
     }
 
     // Handle --move operation
     if let Some((from, to)) = args.move_indices {
-        if let Err(e) = venv_manager::check_venv_modification_allowed() {
-            eprintln!("Error: {e}");
-            return 2;
-        }
         return handle_path_result(searcher.move_entry(from, to), args, &mut out);
     }
 
     // Handle --swap operation
     if let Some((idx1, idx2)) = args.swap_indices {
-        if let Err(e) = venv_manager::check_venv_modification_allowed() {
-            eprintln!("Error: {e}");
-            return 2;
-        }
         return handle_path_result(searcher.swap_entries(idx1, idx2), args, &mut out);
     }
 
     // Handle --prefer operation
     if let Some(ref target) = args.prefer_target {
-        if let Err(e) = venv_manager::check_venv_modification_allowed() {
-            eprintln!("Error: {e}");
-            return 2;
-        }
         return handle_prefer(&searcher, target, args, &mut out);
     }
 

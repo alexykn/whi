@@ -4,6 +4,7 @@ PATH!
 /opt/homebrew/sbin
 /Users/alxknt/.bun/bin
 /bin
+/usr/bin
 /usr/sbin
 /sbin
 /var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin

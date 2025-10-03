@@ -101,11 +101,7 @@ enum Command {
     RemoveProfile(RemoveProfileArgs),
     /// Create whi.file from current PATH
     File(FileArgs),
-    /// Lock project (whi.file → whi.lock)
-    Lock,
-    /// Unlock project (whi.lock → whi.file)
-    Unlock,
-    /// Activate venv from whi.file or whi.lock
+    /// Activate venv from whi.file
     Source,
     /// Exit active venv
     Exit,
@@ -137,8 +133,6 @@ enum Command {
     HiddenVenvSource(HiddenVenvSourceArgs),
     #[command(name = "__venv_exit", hide = true)]
     HiddenVenvExit,
-    #[command(name = "__venv_unlock", hide = true)]
-    HiddenVenvUnlock,
     #[command(name = "__load_saved_path", hide = true)]
     HiddenLoadSavedPath(HiddenLoadSavedPathArgs),
 }
@@ -353,12 +347,9 @@ fn main() {
         Some(Command::HiddenLoad(load_args)) => run_hidden_load(load_args),
         Some(Command::HiddenInit(args)) => run_hidden_init(&args),
         Some(Command::File(file_args)) => run_file(file_args),
-        Some(Command::Lock) => run_lock(),
-        Some(Command::Unlock) => run_unlock(),
         Some(Command::HiddenShouldAutoActivate) => run_should_auto_activate(),
         Some(Command::HiddenVenvSource(args)) => run_hidden_venv_source(&args),
         Some(Command::HiddenVenvExit) => run_hidden_venv_exit(),
-        Some(Command::HiddenVenvUnlock) => run_hidden_venv_unlock(),
         Some(Command::HiddenLoadSavedPath(args)) => run_hidden_load_saved_path(&args),
         None => run_query(query),
     };
@@ -651,44 +642,6 @@ fn run_file(opts: FileArgs) -> i32 {
     }
 }
 
-fn run_lock() -> i32 {
-    if let Some(code) = check_shell_integration() {
-        return code;
-    }
-
-    use whi::venv_manager;
-
-    match venv_manager::lock() {
-        Ok(()) => 0,
-        Err(e) => {
-            eprintln!("Error: {e}");
-            2
-        }
-    }
-}
-
-fn run_unlock() -> i32 {
-    if let Some(code) = check_shell_integration() {
-        return code;
-    }
-
-    use whi::venv_manager;
-
-    match venv_manager::unlock() {
-        Ok(transition) => {
-            println!("Unlocked ./whi.lock → ./whi.file");
-            if transition.is_some() {
-                eprintln!("Run 'whi source' to refresh the current shell session.");
-            }
-            0
-        }
-        Err(e) => {
-            eprintln!("Error: {e}");
-            2
-        }
-    }
-}
-
 fn run_hidden_venv_source(args: &HiddenVenvSourceArgs) -> i32 {
     use whi::venv_manager;
 
@@ -719,39 +672,18 @@ fn run_hidden_venv_exit() -> i32 {
     }
 }
 
-fn run_hidden_venv_unlock() -> i32 {
-    use whi::venv_manager;
-
-    match venv_manager::unlock() {
-        Ok(Some(transition)) => {
-            print_venv_transition(&transition);
-            eprintln!("Unlocked ./whi.lock → ./whi.file");
-            0
-        }
-        Ok(None) => {
-            eprintln!("Unlocked ./whi.lock → ./whi.file");
-            0
-        }
-        Err(e) => {
-            eprintln!("Error: {e}");
-            2
-        }
-    }
-}
-
 fn run_should_auto_activate() -> i32 {
     use whi::config::load_config;
 
     match load_config() {
         Ok(config) => {
             let file_val = if config.venv.auto_activate_file { 1 } else { 0 };
-            let lock_val = if config.venv.auto_activate_lock { 1 } else { 0 };
-            println!("file={} lock={}", file_val, lock_val);
+            println!("file={}", file_val);
             0
         }
         Err(_) => {
             // Default to false on error
-            println!("file=0 lock=0");
+            println!("file=0");
             0
         }
     }

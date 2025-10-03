@@ -44,8 +44,6 @@ pub struct Config {
 #[derive(Debug, Clone)]
 pub struct VenvConfig {
     pub auto_activate_file: bool,
-    pub auto_activate_lock: bool,
-    pub lock_require_cd_exit: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -57,8 +55,6 @@ impl Default for VenvConfig {
     fn default() -> Self {
         Self {
             auto_activate_file: false,
-            auto_activate_lock: false,
-            lock_require_cd_exit: false,
         }
     }
 }
@@ -140,10 +136,8 @@ fn generate_default_config() -> String {
         .join(",\n");
 
     format!(
-        "# whi configuration file\n# This file is automatically created with default values\n\n[venv]\n# Auto-activate whi.file when entering directory (default: {auto_file})\nauto_activate_file = {auto_file}\n\n# Auto-activate whi.lock when entering directory (default: {auto_lock})\nauto_activate_lock = {auto_lock}\n\n# Prevent exiting whi.lock with 'whi exit' - must cd away (default: {require_cd_exit})\n# Only applies when auto_activate_lock = true\nlock_require_cd_exit = {require_cd_exit}\n\n[protected]\n# Protected paths are preserved during 'whi apply' even if deleted in session\n# This prevents breaking your shell by accidentally saving a minimal PATH\npaths = [\n{paths}\n]\n",
+        "# whi configuration file\n# This file is automatically created with default values\n\n[venv]\n# Auto-activate whi.file when entering directory (default: {auto_file})\nauto_activate_file = {auto_file}\n\n[protected]\n# Protected paths are preserved during 'whi apply' even if deleted in session\n# This prevents breaking your shell by accidentally saving a minimal PATH\npaths = [\n{paths}\n]\n",
         auto_file = defaults.venv.auto_activate_file,
-        auto_lock = defaults.venv.auto_activate_lock,
-        require_cd_exit = defaults.venv.lock_require_cd_exit,
         paths = path_entries
     )
 }
@@ -216,12 +210,6 @@ fn parse_config(content: &str) -> Result<Config, String> {
                     "auto_activate_file" => {
                         config.venv.auto_activate_file = parse_bool(value)?;
                     }
-                    "auto_activate_lock" => {
-                        config.venv.auto_activate_lock = parse_bool(value)?;
-                    }
-                    "lock_require_cd_exit" => {
-                        config.venv.lock_require_cd_exit = parse_bool(value)?;
-                    }
                     _ => {} // Ignore unknown keys
                 },
                 _ => {} // Ignore unknown sections
@@ -248,8 +236,6 @@ mod tests {
     fn test_default_config() {
         let config = Config::default();
         assert!(!config.venv.auto_activate_file);
-        assert!(!config.venv.auto_activate_lock);
-        assert!(!config.venv.lock_require_cd_exit);
         assert_eq!(config.protected.paths, default_protected_paths());
     }
 
@@ -258,8 +244,6 @@ mod tests {
         let toml = r#"
 [venv]
 auto_activate_file = true
-auto_activate_lock = false
-lock_require_cd_exit = true
 
 [protected]
 paths = [
@@ -270,8 +254,6 @@ paths = [
 
         let config = parse_config(toml).unwrap();
         assert!(config.venv.auto_activate_file);
-        assert!(!config.venv.auto_activate_lock);
-        assert!(config.venv.lock_require_cd_exit);
         assert_eq!(config.protected.paths.len(), 2);
         assert_eq!(config.protected.paths[0], PathBuf::from("/bin"));
     }
@@ -281,8 +263,6 @@ paths = [
         let default_toml = generate_default_config();
         let config = parse_config(&default_toml).unwrap();
         assert!(!config.venv.auto_activate_file);
-        assert!(!config.venv.auto_activate_lock);
-        assert!(!config.venv.lock_require_cd_exit);
         assert_eq!(config.protected.paths, default_protected_paths());
     }
 }
