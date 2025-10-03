@@ -1,15 +1,12 @@
 use std::env;
 use std::fs;
-use std::io::Write;
+use std::io::ErrorKind;
 use std::path::PathBuf;
 
 #[cfg(unix)]
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+use std::os::unix::fs::DirBuilderExt;
 
 use crate::system;
-
-/// Maximum snapshots to keep per session (keeps initial + last 499)
-const MAX_SNAPSHOTS_PER_SESSION: usize = 500;
 
 /// Get or create session directory (user-specific, secure)
 fn get_session_dir() -> Result<PathBuf, String> {
@@ -27,16 +24,20 @@ fn get_session_dir() -> Result<PathBuf, String> {
     if !session_dir.exists() {
         #[cfg(unix)]
         {
-            fs::DirBuilder::new()
-                .mode(0o700)
-                .create(&session_dir)
-                .map_err(|e| format!("Failed to create session dir: {e}"))?;
+            if let Err(e) = fs::DirBuilder::new().mode(0o700).create(&session_dir) {
+                if e.kind() != ErrorKind::AlreadyExists {
+                    return Err(format!("Failed to create session dir: {e}"));
+                }
+            }
         }
 
         #[cfg(not(unix))]
         {
-            fs::create_dir_all(&session_dir)
-                .map_err(|e| format!("Failed to create session dir: {}", e))?;
+            if let Err(e) = fs::create_dir_all(&session_dir) {
+                if e.kind() != ErrorKind::AlreadyExists {
+                    return Err(format!("Failed to create session dir: {}", e));
+                }
+            }
         }
     }
 
@@ -51,275 +52,50 @@ pub fn get_session_file(pid: u32) -> Result<PathBuf, String> {
 
 /// Write `PATH` snapshot to session log
 pub fn write_path_snapshot(pid: u32, path_string: &str) -> Result<(), String> {
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    // Check if we have a cursor (not at end of history)
-    // If so, truncate after cursor to create new timeline
-    if let Some(cursor) = get_cursor(pid)? {
-        truncate_snapshots(pid, cursor + 1)?;
-    }
-
-    let session_file = get_session_file(pid)?;
-
-    #[cfg(unix)]
-    let mut file = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .mode(0o600)
-        .open(&session_file)
-        .map_err(|e| format!("Failed to open session log: {e}"))?;
-
-    #[cfg(not(unix))]
-    let mut file = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&session_file)
-        .map_err(|e| format!("Failed to open session log: {e}"))?;
-
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|e| format!("Failed to get timestamp: {e}"))?
-        .as_secs();
-
-    // Format: SNAPSHOT:timestamp:path
-    writeln!(file, "SNAPSHOT:{timestamp}:{path_string}")
-        .map_err(|e| format!("Failed to write PATH snapshot: {e}"))?;
-
-    // Drop file handle before potential operations
-    drop(file);
-
-    // Clear cursor (we're back at end of history)
-    clear_cursor(pid)?;
-
-    // Check if we need to cleanup old snapshots (keep initial + last N-1)
-    let snapshots = read_path_snapshots(pid)?;
-    if snapshots.len() > MAX_SNAPSHOTS_PER_SESSION {
-        // Keep snapshot 0 (initial) + last 24 snapshots
-        // This allows 'reset' to always work and 'undo' to work for ~24 operations
-        truncate_to_keep_initial_and_tail(pid, MAX_SNAPSHOTS_PER_SESSION)?;
-    }
-
-    Ok(())
+    crate::history::HistoryContext::global(pid)?.write_snapshot(path_string)
 }
 
 /// Read all `PATH` snapshots from session log
 pub fn read_path_snapshots(pid: u32) -> Result<Vec<String>, String> {
-    let session_file = get_session_file(pid)?;
-
-    if !session_file.exists() {
-        return Ok(Vec::new());
-    }
-
-    let content = fs::read_to_string(&session_file)
-        .map_err(|e| format!("Failed to read session log: {e}"))?;
-
-    let mut snapshots = Vec::new();
-
-    for line in content.lines() {
-        if let Some(rest) = line.strip_prefix("SNAPSHOT:") {
-            // Format: SNAPSHOT:timestamp:path
-            let parts: Vec<&str> = rest.splitn(2, ':').collect();
-            if parts.len() >= 2 {
-                // parts[0] = timestamp, parts[1] = path
-                snapshots.push(parts[1].to_string());
-            }
-        }
-    }
-
-    Ok(snapshots)
+    crate::history::HistoryContext::global(pid)?.read_snapshots()
 }
 
 /// Get the initial `PATH` snapshot (first snapshot in session)
 pub fn get_initial_path(pid: u32) -> Result<Option<String>, String> {
-    let snapshots = read_path_snapshots(pid)?;
-    Ok(snapshots.first().cloned())
+    crate::history::HistoryContext::global(pid)?.initial_snapshot()
 }
 
 /// Truncate snapshots to keep only the first `keep_count` snapshots
 /// This is used by undo/reset to discard "future" snapshots from abandoned timelines
 pub fn truncate_snapshots(pid: u32, keep_count: usize) -> Result<(), String> {
-    let session_file = get_session_file(pid)?;
-
-    if !session_file.exists() {
-        return Ok(());
-    }
-
-    let content = fs::read_to_string(&session_file)
-        .map_err(|e| format!("Failed to read session log: {e}"))?;
-
-    // Keep only the first keep_count snapshot lines
-    let mut new_lines = Vec::new();
-    let mut snapshot_count = 0;
-
-    for line in content.lines() {
-        if line.starts_with("SNAPSHOT:") && snapshot_count < keep_count {
-            new_lines.push(line.to_string());
-            snapshot_count += 1;
-        }
-    }
-
-    #[cfg(unix)]
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(&session_file)
-        .map_err(|e| format!("Failed to open session log for truncation: {e}"))?;
-
-    #[cfg(not(unix))]
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .truncate(true)
-        .open(&session_file)
-        .map_err(|e| format!("Failed to open session log for truncation: {e}"))?;
-
-    for line in new_lines {
-        writeln!(file, "{line}")
-            .map_err(|e| format!("Failed to write truncated session log: {e}"))?;
-    }
-
-    Ok(())
-}
-
-/// Truncate snapshots to keep initial + last N-1 snapshots (rolling window)
-/// This is used for within-session cleanup to prevent unbounded growth
-fn truncate_to_keep_initial_and_tail(pid: u32, max_snapshots: usize) -> Result<(), String> {
-    let session_file = get_session_file(pid)?;
-
-    if !session_file.exists() {
-        return Ok(());
-    }
-
-    let content = fs::read_to_string(&session_file)
-        .map_err(|e| format!("Failed to read session log: {e}"))?;
-
-    // Count total snapshots
-    let total_snapshots = content
-        .lines()
-        .filter(|l| l.starts_with("SNAPSHOT:"))
-        .count();
-
-    if total_snapshots <= max_snapshots {
-        return Ok(()); // No cleanup needed
-    }
-
-    // Calculate which snapshots to keep:
-    // - Always keep snapshot 0 (initial)
-    // - Keep last (max_snapshots - 1) snapshots
-    let drop_count = total_snapshots - max_snapshots;
-
-    // Keep snapshots at indices: [0] + [drop_count+1, drop_count+2, ..., total-1]
-    let mut new_lines = Vec::new();
-    let mut snapshot_index = 0;
-
-    for line in content.lines() {
-        if line.starts_with("SNAPSHOT:") {
-            // Keep snapshot 0 or snapshots after drop window
-            if snapshot_index == 0 || snapshot_index > drop_count {
-                new_lines.push(line.to_string());
-            }
-            snapshot_index += 1;
-        }
-    }
-
-    #[cfg(unix)]
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(&session_file)
-        .map_err(|e| format!("Failed to open session log for truncation: {e}"))?;
-
-    #[cfg(not(unix))]
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .truncate(true)
-        .open(&session_file)
-        .map_err(|e| format!("Failed to open session log for truncation: {e}"))?;
-
-    for line in new_lines {
-        writeln!(file, "{line}")
-            .map_err(|e| format!("Failed to write truncated session log: {e}"))?;
-    }
-
-    Ok(())
+    crate::history::HistoryContext::global(pid)?.truncate(keep_count)
 }
 
 /// Get cursor file path for given `PID`
-fn get_cursor_file(pid: u32) -> Result<PathBuf, String> {
-    let session_dir = get_session_dir()?;
-    Ok(session_dir.join(format!("session_{pid}.cursor")))
-}
-
 /// Get current cursor position (index into snapshots)
 /// Returns `None` if at end of history (no cursor file = at latest)
 pub fn get_cursor(pid: u32) -> Result<Option<usize>, String> {
-    let cursor_file = get_cursor_file(pid)?;
-
-    if !cursor_file.exists() {
-        return Ok(None); // At end of history
-    }
-
-    let content =
-        fs::read_to_string(&cursor_file).map_err(|e| format!("Failed to read cursor file: {e}"))?;
-
-    content
-        .trim()
-        .parse::<usize>()
-        .map(Some)
-        .map_err(|e| format!("Invalid cursor value: {e}"))
+    crate::history::HistoryContext::global(pid)?.get_cursor()
 }
 
 /// Set cursor position (index into snapshots)
 pub fn set_cursor(pid: u32, position: usize) -> Result<(), String> {
-    let cursor_file = get_cursor_file(pid)?;
-
-    fs::write(&cursor_file, position.to_string())
-        .map_err(|e| format!("Failed to write cursor file: {e}"))
+    crate::history::HistoryContext::global(pid)?.set_cursor(position)
 }
 
 /// Clear cursor (move to end of history)
 pub fn clear_cursor(pid: u32) -> Result<(), String> {
-    let cursor_file = get_cursor_file(pid)?;
-
-    if cursor_file.exists() {
-        fs::remove_file(&cursor_file).map_err(|e| format!("Failed to remove cursor file: {e}"))?;
-    }
-
-    Ok(())
+    crate::history::HistoryContext::global(pid)?.clear_cursor()
 }
 
 /// Get current `PATH` snapshot based on cursor position
 pub fn get_current_snapshot(pid: u32) -> Result<Option<String>, String> {
-    let snapshots = read_path_snapshots(pid)?;
-
-    if snapshots.is_empty() {
-        return Ok(None);
-    }
-
-    let cursor = get_cursor(pid)?.unwrap_or(snapshots.len() - 1);
-
-    if cursor >= snapshots.len() {
-        return Err(format!(
-            "Cursor position {cursor} exceeds history length {}",
-            snapshots.len()
-        ));
-    }
-
-    Ok(Some(snapshots[cursor].clone()))
+    crate::history::HistoryContext::global(pid)?.current_snapshot()
 }
 
 /// Clear the session log for given `PID`
 pub fn clear_session(pid: u32) -> Result<(), String> {
-    let session_file = get_session_file(pid)?;
-    if session_file.exists() {
-        fs::remove_file(&session_file).map_err(|e| format!("Failed to remove session log: {e}"))?;
-    }
-
-    // Also clear cursor
-    clear_cursor(pid)?;
-
-    Ok(())
+    crate::history::HistoryContext::global(pid)?.clear_history()
 }
 
 /// Get all session files in the session directory
@@ -379,9 +155,48 @@ pub fn cleanup_old_sessions() -> Result<usize, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::env;
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+    use tempfile::TempDir;
+
+    static TEST_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    struct SessionTempDir {
+        _dir: TempDir,
+        old_tmp: Option<String>,
+        _guard: MutexGuard<'static, ()>,
+    }
+
+    impl SessionTempDir {
+        fn new() -> Self {
+            let guard = TEST_ENV_LOCK
+                .get_or_init(|| Mutex::new(()))
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let dir = TempDir::new().unwrap();
+            let old_xdg = env::var("XDG_RUNTIME_DIR").ok();
+            env::set_var("XDG_RUNTIME_DIR", dir.path());
+            Self {
+                _dir: dir,
+                old_tmp: old_xdg,
+                _guard: guard,
+            }
+        }
+    }
+
+    impl Drop for SessionTempDir {
+        fn drop(&mut self) {
+            if let Some(ref value) = self.old_tmp {
+                env::set_var("XDG_RUNTIME_DIR", value);
+            } else {
+                env::remove_var("XDG_RUNTIME_DIR");
+            }
+        }
+    }
 
     #[test]
     fn test_session_file_path() {
+        let _guard = SessionTempDir::new();
         let path = get_session_file(12345).unwrap();
         let path_str = path.to_string_lossy();
         assert!(
@@ -395,6 +210,7 @@ mod tests {
 
     #[test]
     fn test_session_dir_creation() {
+        let _guard = SessionTempDir::new();
         // Session directory should be created on first access
         let dir = get_session_dir().unwrap();
         assert!(dir.exists(), "Session directory should exist");
@@ -408,6 +224,7 @@ mod tests {
     fn test_session_file_permissions() {
         use std::os::unix::fs::PermissionsExt;
 
+        let _guard = SessionTempDir::new();
         let pid = 999001;
         let _ = clear_session(pid);
 
@@ -436,6 +253,7 @@ mod tests {
     fn test_session_dir_permissions() {
         use std::os::unix::fs::PermissionsExt;
 
+        let _guard = SessionTempDir::new();
         // Get or create session directory
         let dir = get_session_dir().unwrap();
 
@@ -455,6 +273,7 @@ mod tests {
 
     #[test]
     fn test_write_and_read_snapshots() {
+        let _guard = SessionTempDir::new();
         let pid = 999002;
         let _ = clear_session(pid);
 
@@ -477,6 +296,7 @@ mod tests {
 
     #[test]
     fn test_snapshot_truncation() {
+        let _guard = SessionTempDir::new();
         let pid = 999003;
         let _ = clear_session(pid);
 
@@ -506,6 +326,7 @@ mod tests {
 
     #[test]
     fn test_rolling_window_cleanup() {
+        let _guard = SessionTempDir::new();
         let pid = 999004;
         let _ = clear_session(pid);
 
@@ -522,7 +343,10 @@ mod tests {
 
         // Manually call cleanup with max=5
         // Should keep snapshot 0 + last 4 (indices 7, 8, 9, 10)
-        truncate_to_keep_initial_and_tail(pid, 5).unwrap();
+        crate::history::HistoryContext::global(pid)
+            .unwrap()
+            .truncate_keep_initial_and_tail(5)
+            .unwrap();
 
         let snapshots = read_path_snapshots(pid).unwrap();
         assert_eq!(snapshots.len(), 5);
@@ -538,6 +362,7 @@ mod tests {
 
     #[test]
     fn test_get_initial_path() {
+        let _guard = SessionTempDir::new();
         let pid = 999005;
         let _ = clear_session(pid);
 
@@ -557,6 +382,7 @@ mod tests {
 
     #[test]
     fn test_duplicate_init_handled() {
+        let _guard = SessionTempDir::new();
         let pid = 999006;
         let _ = clear_session(pid);
 

@@ -84,6 +84,7 @@ whi diff full                # show all entries (including unchanged)
 whi apply                    # save to current shell's config
 whi apply fish               # save to specific shell
 whi apply all                # save to all shells (bash/zsh/fish)
+whi apply --force [--no-protect]   # required when running inside an active whi venv
 
 # Profile management
 whi save work                # save current PATH as profile "work"
@@ -144,9 +145,9 @@ Use whichever spelling you prefer—both routes converge in Rust.
 
 ## Persistence & State
 
-- **Saved PATH files** live in `~/.whi/` (`saved_path_bash`, `saved_path_zsh`, `saved_path_fish`). `whi apply all` writes to all three. Each save creates a `*.bak` backup before overwriting.
+- **Saved PATH files** live in `~/.whi/` (`saved_path_bash`, `saved_path_zsh`, `saved_path_fish`). `whi apply all` writes to all three. Each save creates a `*.bak` backup before overwriting. Files use a human-friendly format with `PATH!` and `ENV!` sections (one path per line). Legacy colon-separated files from pre-0.5.0 are automatically detected and supported for backward compatibility.
 
-- **Profile storage** lives in `~/.whi/profiles/`. Each profile is a file containing a colon-separated PATH string. Use `whi save <name>` to save current PATH as a profile, `whi load <name>` to restore it, and `whi list` to see all profiles.
+- **Profile storage** lives in `~/.whi/profiles/`. Each profile is a file in the same human-friendly format as saved PATH files. Use `whi save <name>` to save current PATH as a profile, `whi load <name>` to restore it, and `whi list` to see all profiles. You can manually edit these files - just list one path per line under the `PATH!` section.
 
 - **Session snapshots** live in `${XDG_RUNTIME_DIR:-/tmp}/whi-<uid>/session_<ppid>.log`. Each PATH modification writes a snapshot (timestamp + full PATH string). The undo/redo system navigates through these snapshots with a cursor. Sessions keep up to 500 snapshots (initial + last 499) and auto-cleanup old sessions after 24 hours.
 
@@ -173,7 +174,7 @@ $ whi reset                 # back to snapshot 0, cursor cleared
 
 - Mutating commands exit with an instructional message if the integration is missing. Copy the snippet shown, run it, and add it to your shell config for future sessions.
 
-- Profile loading includes self-protection: if a profile doesn't contain the current `whi` directory, it's silently appended to prevent losing access to `whi` itself.
+- The shell integration uses absolute paths to `whi`, so it continues to work even if PATH is modified or replaced during initialization.
 
 - If you want to script against `whi` directly, capture stdout and export the string yourself. The integration just automates that for interactive use.
 

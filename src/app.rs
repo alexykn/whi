@@ -5,12 +5,13 @@ use std::path::{Path, PathBuf};
 
 use crate::cli::{Args, ColorWhen};
 use crate::executor::{ExecutableCheck, SearchResult};
+use crate::history::{HistoryContext, HistoryScope};
 use crate::output::OutputFormatter;
 use crate::path::PathSearcher;
 use crate::path_resolver;
-use crate::session_tracker;
 use crate::shell_integration;
 use crate::system;
+use crate::venv_manager;
 
 /// Get the session `PID` - either from `WHI_SESSION_PID` env var or fall back to parent `PID`
 fn get_session_pid() -> Result<u32, std::io::Error> {
@@ -28,13 +29,35 @@ fn get_session_pid() -> Result<u32, std::io::Error> {
 
 /// Write PATH snapshot to session tracker, with error handling
 fn write_snapshot_safe(new_path: &str, args: &Args) {
-    if let Ok(ppid) = get_session_pid() {
-        if let Err(e) = session_tracker::write_path_snapshot(ppid, new_path) {
+    match history_for_current_scope() {
+        Ok(history) => {
+            if let Err(e) = history.write_snapshot(new_path) {
+                if !args.quiet && !args.silent {
+                    eprintln!("Warning: Failed to write snapshot: {e}");
+                }
+            }
+        }
+        Err(e) => {
             if !args.quiet && !args.silent {
-                eprintln!("Warning: Failed to write snapshot: {e}");
+                eprintln!("Warning: Failed to acquire history: {e}");
             }
         }
     }
+}
+
+fn history_for_current_scope() -> Result<HistoryContext, String> {
+    let pid = get_session_pid().map_err(|e| e.to_string())?;
+
+    if venv_manager::is_in_venv() {
+        if let Ok(dir) = env::var("WHI_VENV_DIR") {
+            if !dir.is_empty() {
+                let path = PathBuf::from(dir);
+                return HistoryContext::venv(pid, path.as_path());
+            }
+        }
+    }
+
+    HistoryContext::global(pid)
 }
 
 /// Output new PATH and flush, returning success code
@@ -67,6 +90,11 @@ fn handle_path_result(
 #[allow(clippy::too_many_lines)]
 #[must_use]
 pub fn run(args: &Args) -> i32 {
+    if let Err(e) = crate::config::ensure_config_exists() {
+        eprintln!("Error: {e}");
+        return 2;
+    }
+
     // Handle init subcommand
     if let Some(ref shell) = args.init_shell {
         match shell_integration::generate_init_script(shell) {
@@ -83,7 +111,7 @@ pub fn run(args: &Args) -> i32 {
 
     // Handle apply subcommand (renamed from save)
     if let Some(shell_opt) = &args.apply_shell {
-        return handle_apply(shell_opt.as_ref());
+        return handle_apply(shell_opt.as_ref(), args.no_protect, args.apply_force);
     }
 
     // Handle save profile subcommand
@@ -93,6 +121,10 @@ pub fn run(args: &Args) -> i32 {
 
     // Handle load profile subcommand
     if let Some(profile_name) = &args.load_profile {
+        if let Err(e) = venv_manager::check_venv_modification_allowed() {
+            eprintln!("Error: {e}");
+            return 2;
+        }
         return handle_load_profile(profile_name);
     }
 
@@ -103,16 +135,28 @@ pub fn run(args: &Args) -> i32 {
 
     // Handle reset subcommand
     if args.reset {
+        if let Err(e) = venv_manager::check_venv_modification_allowed() {
+            eprintln!("Error: {e}");
+            return 2;
+        }
         return handle_reset();
     }
 
     // Handle undo subcommand
     if let Some(count) = args.undo_count {
+        if let Err(e) = venv_manager::check_venv_modification_allowed() {
+            eprintln!("Error: {e}");
+            return 2;
+        }
         return handle_undo(count);
     }
 
     // Handle redo subcommand
     if let Some(count) = args.redo_count {
+        if let Err(e) = venv_manager::check_venv_modification_allowed() {
+            eprintln!("Error: {e}");
+            return 2;
+        }
         return handle_redo(count);
     }
 
@@ -132,6 +176,10 @@ pub fn run(args: &Args) -> i32 {
 
     // Handle --clean operation
     if args.clean {
+        if let Err(e) = venv_manager::check_venv_modification_allowed() {
+            eprintln!("Error: {e}");
+            return 2;
+        }
         let (new_path, _removed_indices) = searcher.clean_duplicates();
         write_snapshot_safe(&new_path, args);
         return output_path(&mut out, &new_path);
@@ -139,21 +187,37 @@ pub fn run(args: &Args) -> i32 {
 
     // Handle --delete operation
     if !args.delete_targets.is_empty() {
+        if let Err(e) = venv_manager::check_venv_modification_allowed() {
+            eprintln!("Error: {e}");
+            return 2;
+        }
         return handle_delete(&searcher, &args.delete_targets, args, &mut out);
     }
 
     // Handle --move operation
     if let Some((from, to)) = args.move_indices {
+        if let Err(e) = venv_manager::check_venv_modification_allowed() {
+            eprintln!("Error: {e}");
+            return 2;
+        }
         return handle_path_result(searcher.move_entry(from, to), args, &mut out);
     }
 
     // Handle --swap operation
     if let Some((idx1, idx2)) = args.swap_indices {
+        if let Err(e) = venv_manager::check_venv_modification_allowed() {
+            eprintln!("Error: {e}");
+            return 2;
+        }
         return handle_path_result(searcher.swap_entries(idx1, idx2), args, &mut out);
     }
 
     // Handle --prefer operation
     if let Some(ref target) = args.prefer_target {
+        if let Err(e) = venv_manager::check_venv_modification_allowed() {
+            eprintln!("Error: {e}");
+            return 2;
+        }
         return handle_prefer(&searcher, target, args, &mut out);
     }
 
@@ -430,13 +494,7 @@ fn handle_prefer_index<W: Write>(
 
     match searcher.move_entry(target_idx, new_position) {
         Ok(new_path) => {
-            if let Ok(ppid) = get_session_pid() {
-                if let Err(e) = session_tracker::write_path_snapshot(ppid, &new_path) {
-                    if !args.quiet && !args.silent {
-                        eprintln!("Warning: Failed to write snapshot: {e}");
-                    }
-                }
-            }
+            write_snapshot_safe(&new_path, args);
 
             writeln!(out, "{new_path}").ok();
             out.flush().ok();
@@ -533,13 +591,7 @@ fn handle_prefer_exact_path<W: Write>(
                 );
             }
 
-            if let Ok(ppid) = get_session_pid() {
-                if let Err(e) = session_tracker::write_path_snapshot(ppid, &new_path) {
-                    if !args.quiet && !args.silent {
-                        eprintln!("Warning: Failed to write snapshot: {e}");
-                    }
-                }
-            }
+            write_snapshot_safe(&new_path, args);
 
             writeln!(out, "{new_path}").ok();
             out.flush().ok();
@@ -598,13 +650,7 @@ fn handle_prefer_path_only<W: Write>(
                 eprintln!("Added {} to PATH at index {}", resolved_path.display(), idx);
             }
 
-            if let Ok(ppid) = get_session_pid() {
-                if let Err(e) = session_tracker::write_path_snapshot(ppid, &new_path) {
-                    if !args.quiet && !args.silent {
-                        eprintln!("Warning: Failed to write snapshot: {e}");
-                    }
-                }
-            }
+            write_snapshot_safe(&new_path, args);
 
             writeln!(out, "{new_path}").ok();
             out.flush().ok();
@@ -760,13 +806,7 @@ fn handle_delete<W: Write>(
 
     match result {
         Ok(new_path) => {
-            if let Ok(ppid) = get_session_pid() {
-                if let Err(e) = session_tracker::write_path_snapshot(ppid, &new_path) {
-                    if !args.quiet && !args.silent {
-                        eprintln!("Warning: Failed to write snapshot: {e}");
-                    }
-                }
-            }
+            write_snapshot_safe(&new_path, args);
 
             writeln!(out, "{new_path}").ok();
             out.flush().ok();
@@ -781,12 +821,57 @@ fn handle_delete<W: Write>(
     }
 }
 
-fn handle_apply(shell_opt: Option<&String>) -> i32 {
+fn handle_apply(shell_opt: Option<&String>, no_protect: bool, force: bool) -> i32 {
+    use crate::config::load_config;
     use crate::config_manager::save_path;
-    use crate::session_tracker::{cleanup_old_sessions, clear_session};
+    use crate::session_tracker::cleanup_old_sessions;
     use crate::shell_detect::{detect_current_shell, Shell};
+    use std::collections::HashSet;
 
-    let path_var = env::var("PATH").unwrap_or_default();
+    if venv_manager::is_in_venv() && !force {
+        eprintln!("Error: Refusing to run 'whi apply' inside an active PATH environment. Exit the venv or re-run with '--force' (optionally with '--no-protect').");
+        return 2;
+    }
+
+    let mut path_var = env::var("PATH").unwrap_or_default();
+
+    // Apply protected paths unless --no-protect is set
+    if !no_protect {
+        if let Ok(config) = load_config() {
+            let current_paths: HashSet<String> = path_var
+                .split(':')
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+                .collect();
+
+            let protected_paths: Vec<String> = config
+                .protected
+                .paths
+                .iter()
+                .filter_map(|p| {
+                    let path_str = p.to_string_lossy().to_string();
+                    if !current_paths.contains(&path_str) {
+                        Some(path_str)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            if !protected_paths.is_empty() {
+                // Insert protected paths at the beginning
+                let protected_count = protected_paths.len();
+                path_var = format!("{}:{}", protected_paths.join(":"), path_var);
+
+                eprintln!(
+                    "Protected {} system path{}: {}",
+                    protected_count,
+                    if protected_count == 1 { "" } else { "s" },
+                    protected_paths.join(", ")
+                );
+            }
+        }
+    }
 
     let result = match shell_opt {
         None => {
@@ -861,20 +946,20 @@ fn handle_apply(shell_opt: Option<&String>) -> i32 {
     };
 
     if result == 0 {
-        if let Ok(ppid) = get_session_pid() {
-            // Clear old session and reinitialize with current PATH as new baseline
-            if let Err(e) = clear_session(ppid) {
-                eprintln!("Warning: Failed to clear session log: {e}");
-            }
+        match history_for_current_scope() {
+            Ok(history) => {
+                if let Err(e) = history.reset_with_initial(&path_var) {
+                    eprintln!("Warning: Failed to reinitialize history: {e}");
+                }
 
-            // Reinitialize session with current PATH as baseline
-            if let Err(e) = session_tracker::write_path_snapshot(ppid, &path_var) {
-                eprintln!("Warning: Failed to reinitialize session: {e}");
+                if history.scope() == HistoryScope::Global {
+                    let _ = cleanup_old_sessions();
+                }
+            }
+            Err(e) => {
+                eprintln!("Warning: Failed to update history: {e}");
             }
         }
-
-        // Silently cleanup old sessions (users don't need to know about this)
-        let _ = cleanup_old_sessions();
     }
 
     result
@@ -882,18 +967,15 @@ fn handle_apply(shell_opt: Option<&String>) -> i32 {
 
 fn handle_diff(full: bool) -> i32 {
     use crate::path_diff::{compute_diff, format_diff_with_limit};
-    use crate::session_tracker::get_initial_path;
 
     let current_path = env::var("PATH").unwrap_or_default();
     let use_color = atty::is(atty::Stream::Stdout);
 
-    // Get baseline: use initial session PATH, or fall back to current PATH if no session
-    let ppid = get_session_pid().ok();
-    let baseline_path = ppid
-        .and_then(|pid| get_initial_path(pid).ok().flatten())
+    let baseline_path = history_for_current_scope()
+        .ok()
+        .and_then(|history| history.initial_snapshot().ok().flatten())
         .unwrap_or_else(|| current_path.clone());
 
-    // Simply compare current PATH to initial snapshot
     let diff = compute_diff(&current_path, &baseline_path, full);
     let formatted = format_diff_with_limit(&diff, use_color, full);
 
@@ -903,36 +985,36 @@ fn handle_diff(full: bool) -> i32 {
 }
 
 fn handle_reset() -> i32 {
-    use crate::session_tracker::{get_initial_path, truncate_snapshots};
     use std::io::Write;
 
-    let ppid = match get_session_pid() {
-        Ok(pid) => pid,
-        Err(e) => {
-            eprintln!("Error: {e}");
-            return 2;
-        }
-    };
+    match history_for_current_scope() {
+        Ok(history) => match history.initial_snapshot() {
+            Ok(Some(initial_path)) => {
+                if let Err(e) = history.truncate(1) {
+                    eprintln!("Warning: Failed to truncate snapshot history: {e}");
+                }
 
-    match get_initial_path(ppid) {
-        Ok(Some(initial_path)) => {
-            // Truncate to keep only the initial snapshot
-            if let Err(e) = truncate_snapshots(ppid, 1) {
-                eprintln!("Warning: Failed to truncate snapshot history: {e}");
+                if let Err(e) = history.clear_cursor() {
+                    eprintln!("Warning: Failed to reset history cursor: {e}");
+                }
+
+                let stdout = io::stdout();
+                let mut out = BufWriter::new(stdout.lock());
+                writeln!(out, "{initial_path}").ok();
+                out.flush().ok();
+                0
             }
-
-            let stdout = io::stdout();
-            let mut out = BufWriter::new(stdout.lock());
-            writeln!(out, "{initial_path}").ok();
-            out.flush().ok();
-            0
-        }
-        Ok(None) => {
-            eprintln!(
-                "Error: No initial PATH found. No operations have been performed in this session."
-            );
-            1
-        }
+            Ok(None) => {
+                eprintln!(
+                    "Error: No initial PATH found. No operations have been performed in this session."
+                );
+                1
+            }
+            Err(e) => {
+                eprintln!("Error: {e}");
+                2
+            }
+        },
         Err(e) => {
             eprintln!("Error: {e}");
             2
@@ -941,7 +1023,6 @@ fn handle_reset() -> i32 {
 }
 
 fn handle_undo(count: usize) -> i32 {
-    use crate::session_tracker::{get_cursor, read_path_snapshots, set_cursor};
     use std::io::Write;
 
     if count == 0 {
@@ -949,56 +1030,55 @@ fn handle_undo(count: usize) -> i32 {
         return 2;
     }
 
-    let ppid = match get_session_pid() {
-        Ok(pid) => pid,
-        Err(e) => {
-            eprintln!("Error: {e}");
-            return 2;
-        }
-    };
+    match history_for_current_scope() {
+        Ok(history) => match history.read_snapshots() {
+            Ok(snapshots) => {
+                if snapshots.is_empty() {
+                    eprintln!(
+                        "Error: No PATH history found. No operations have been performed in this session."
+                    );
+                    return 1;
+                }
 
-    match read_path_snapshots(ppid) {
-        Ok(snapshots) => {
-            if snapshots.is_empty() {
-                eprintln!("Error: No PATH history found. No operations have been performed in this session.");
-                return 1;
-            }
+                let current_pos = match history.get_cursor() {
+                    Ok(Some(pos)) => pos,
+                    Ok(None) => snapshots.len() - 1,
+                    Err(e) => {
+                        eprintln!("Error: {e}");
+                        return 2;
+                    }
+                };
 
-            // Get current cursor position (or end of history)
-            let current_pos = match get_cursor(ppid) {
-                Ok(Some(pos)) => pos,
-                Ok(None) => snapshots.len() - 1,
-                Err(e) => {
-                    eprintln!("Error: {e}");
+                if current_pos < count {
+                    if current_pos == 0 {
+                        eprintln!("Error: Cannot undo further. Already at initial PATH state.");
+                    } else {
+                        eprintln!(
+                            "Error: Can only undo {current_pos} more step(s). Use 'whi reset' to go back to the initial state."
+                        );
+                    }
+                    return 1;
+                }
+
+                let target_index = current_pos - count;
+                let target_snapshot = &snapshots[target_index];
+
+                if let Err(e) = history.set_cursor(target_index) {
+                    eprintln!("Error: Failed to set cursor: {e}");
                     return 2;
                 }
-            };
 
-            // Check if we can go back
-            if current_pos < count {
-                if current_pos == 0 {
-                    eprintln!("Error: Cannot undo further. Already at initial PATH state.");
-                } else {
-                    eprintln!("Error: Can only undo {current_pos} more step(s). Use 'whi reset' to go back to the initial state.");
-                }
-                return 1;
+                let stdout = io::stdout();
+                let mut out = BufWriter::new(stdout.lock());
+                writeln!(out, "{target_snapshot}").ok();
+                out.flush().ok();
+                0
             }
-
-            let target_index = current_pos - count;
-            let target_snapshot = &snapshots[target_index];
-
-            // Set cursor to new position
-            if let Err(e) = set_cursor(ppid, target_index) {
-                eprintln!("Error: Failed to set cursor: {e}");
-                return 2;
+            Err(e) => {
+                eprintln!("Error: {e}");
+                2
             }
-
-            let stdout = io::stdout();
-            let mut out = BufWriter::new(stdout.lock());
-            writeln!(out, "{target_snapshot}").ok();
-            out.flush().ok();
-            0
-        }
+        },
         Err(e) => {
             eprintln!("Error: {e}");
             2
@@ -1007,7 +1087,6 @@ fn handle_undo(count: usize) -> i32 {
 }
 
 fn handle_redo(count: usize) -> i32 {
-    use crate::session_tracker::{clear_cursor, get_cursor, read_path_snapshots, set_cursor};
     use std::io::Write;
 
     if count == 0 {
@@ -1015,66 +1094,61 @@ fn handle_redo(count: usize) -> i32 {
         return 2;
     }
 
-    let ppid = match get_session_pid() {
-        Ok(pid) => pid,
-        Err(e) => {
-            eprintln!("Error: {e}");
-            return 2;
-        }
-    };
-
-    match read_path_snapshots(ppid) {
-        Ok(snapshots) => {
-            if snapshots.is_empty() {
-                eprintln!("Error: No PATH history found. No operations have been performed in this session.");
-                return 1;
-            }
-
-            // Get current cursor position
-            let current_pos = match get_cursor(ppid) {
-                Ok(Some(pos)) => pos,
-                Ok(None) => {
-                    eprintln!("Error: Already at the latest state. Nothing to redo.");
+    match history_for_current_scope() {
+        Ok(history) => match history.read_snapshots() {
+            Ok(snapshots) => {
+                if snapshots.is_empty() {
+                    eprintln!("Error: No PATH history found. No operations have been performed in this session.");
                     return 1;
                 }
-                Err(e) => {
-                    eprintln!("Error: {e}");
+
+                let current_pos = match history.get_cursor() {
+                    Ok(Some(pos)) => pos,
+                    Ok(None) => {
+                        eprintln!("Error: Already at the latest state. Nothing to redo.");
+                        return 1;
+                    }
+                    Err(e) => {
+                        eprintln!("Error: {e}");
+                        return 2;
+                    }
+                };
+
+                let max_pos = snapshots.len() - 1;
+                if current_pos + count > max_pos {
+                    let available = max_pos - current_pos;
+                    if available == 0 {
+                        eprintln!("Error: Already at the latest state. Nothing to redo.");
+                    } else {
+                        eprintln!("Error: Can only redo {available} more step(s).");
+                    }
+                    return 1;
+                }
+
+                let target_index = current_pos + count;
+                let target_snapshot = &snapshots[target_index];
+
+                if target_index == max_pos {
+                    if let Err(e) = history.clear_cursor() {
+                        eprintln!("Error: Failed to clear cursor: {e}");
+                        return 2;
+                    }
+                } else if let Err(e) = history.set_cursor(target_index) {
+                    eprintln!("Error: Failed to set cursor: {e}");
                     return 2;
                 }
-            };
 
-            // Check if we can go forward
-            let max_pos = snapshots.len() - 1;
-            if current_pos + count > max_pos {
-                let available = max_pos - current_pos;
-                if available == 0 {
-                    eprintln!("Error: Already at the latest state. Nothing to redo.");
-                } else {
-                    eprintln!("Error: Can only redo {available} more step(s).");
-                }
-                return 1;
+                let stdout = io::stdout();
+                let mut out = BufWriter::new(stdout.lock());
+                writeln!(out, "{target_snapshot}").ok();
+                out.flush().ok();
+                0
             }
-
-            let target_index = current_pos + count;
-            let target_snapshot = &snapshots[target_index];
-
-            // If we're moving to the end, clear cursor; otherwise set it
-            if target_index == max_pos {
-                if let Err(e) = clear_cursor(ppid) {
-                    eprintln!("Error: Failed to clear cursor: {e}");
-                    return 2;
-                }
-            } else if let Err(e) = set_cursor(ppid, target_index) {
-                eprintln!("Error: Failed to set cursor: {e}");
-                return 2;
+            Err(e) => {
+                eprintln!("Error: {e}");
+                2
             }
-
-            let stdout = io::stdout();
-            let mut out = BufWriter::new(stdout.lock());
-            writeln!(out, "{target_snapshot}").ok();
-            out.flush().ok();
-            0
-        }
+        },
         Err(e) => {
             eprintln!("Error: {e}");
             2
@@ -1139,10 +1213,14 @@ fn handle_load_profile(profile_name: &str) -> i32 {
                 }
             }
 
-            // Write snapshot for the loaded profile
-            if let Ok(ppid) = get_session_pid() {
-                if let Err(e) = session_tracker::write_path_snapshot(ppid, &path_string) {
-                    eprintln!("Warning: Failed to write snapshot for loaded profile: {e}");
+            match history_for_current_scope() {
+                Ok(history) => {
+                    if let Err(e) = history.write_snapshot(&path_string) {
+                        eprintln!("Warning: Failed to write snapshot for loaded profile: {e}");
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Warning: Failed to acquire history for loaded profile: {e}");
                 }
             }
 

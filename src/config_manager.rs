@@ -8,6 +8,8 @@ use crate::shell_detect::{get_config_file_path, get_saved_path_file, get_sourcin
 
 /// Save the current `PATH` for a shell
 pub fn save_path(shell: &Shell, path: &str) -> Result<(), String> {
+    use crate::path_file::format_path_file;
+
     let saved_path_file = get_saved_path_file(shell)?;
 
     // Create ~/.whi directory if it doesn't exist
@@ -33,12 +35,15 @@ pub fn save_path(shell: &Shell, path: &str) -> Result<(), String> {
             .map_err(|e| format!("Failed to commit backup: {e}"))?;
     }
 
+    // Format PATH as human-friendly file
+    let formatted = format_path_file(path);
+
     // Write PATH atomically
     let mut atomic_file = AtomicFile::new(&saved_path_file)
         .map_err(|e| format!("Failed to create PATH file: {e}"))?;
 
     atomic_file
-        .write_all(path.as_bytes())
+        .write_all(formatted.as_bytes())
         .map_err(|e| format!("Failed to write PATH: {e}"))?;
 
     atomic_file
@@ -129,6 +134,8 @@ fn get_profiles_dir() -> Result<std::path::PathBuf, String> {
 }
 
 pub fn save_profile(profile_name: &str, path: &str) -> Result<(), String> {
+    use crate::path_file::format_path_file;
+
     if profile_name.is_empty() {
         return Err("Profile name cannot be empty".to_string());
     }
@@ -142,11 +149,14 @@ pub fn save_profile(profile_name: &str, path: &str) -> Result<(), String> {
     let profiles_dir = get_profiles_dir()?;
     let profile_file = profiles_dir.join(profile_name);
 
+    // Format PATH as human-friendly file
+    let formatted = format_path_file(path);
+
     let mut atomic_file = AtomicFile::new(&profile_file)
         .map_err(|e| format!("Failed to create profile file: {e}"))?;
 
     atomic_file
-        .write_all(path.as_bytes())
+        .write_all(formatted.as_bytes())
         .map_err(|e| format!("Failed to write profile: {e}"))?;
 
     atomic_file
@@ -157,6 +167,8 @@ pub fn save_profile(profile_name: &str, path: &str) -> Result<(), String> {
 }
 
 pub fn load_profile(profile_name: &str) -> Result<String, String> {
+    use crate::path_file::parse_path_file;
+
     if profile_name.is_empty() {
         return Err("Profile name cannot be empty".to_string());
     }
@@ -174,7 +186,10 @@ pub fn load_profile(profile_name: &str) -> Result<String, String> {
         return Err(format!("Profile '{profile_name}' not found"));
     }
 
-    fs::read_to_string(&profile_file).map_err(|e| format!("Failed to read profile file: {e}"))
+    let content = fs::read_to_string(&profile_file)
+        .map_err(|e| format!("Failed to read profile file: {e}"))?;
+
+    parse_path_file(&content)
 }
 
 pub fn delete_profile(profile_name: &str) -> Result<(), String> {
@@ -226,6 +241,22 @@ pub fn list_profiles() -> Result<Vec<String>, String> {
 
     profiles.sort();
     Ok(profiles)
+}
+
+/// Load saved PATH for a shell (used by shell integration on startup)
+pub fn load_saved_path_for_shell(shell: &Shell) -> Result<String, String> {
+    use crate::path_file::parse_path_file;
+
+    let saved_path_file = get_saved_path_file(shell)?;
+
+    if !saved_path_file.exists() {
+        return Err(format!("No saved PATH found for {}", shell.as_str()));
+    }
+
+    let content = fs::read_to_string(&saved_path_file)
+        .map_err(|e| format!("Failed to read saved PATH file: {e}"))?;
+
+    parse_path_file(&content)
 }
 
 #[cfg(test)]

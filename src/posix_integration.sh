@@ -1,24 +1,144 @@
-# whi shell integration for bash/zsh (v0.4.1)
+# whi shell integration for bash/zsh (v0.5.0)
+
+# Absolute path to the whi binary is injected by `whi init`
+__WHI_BIN="__WHI_BIN__"
+
+__whi_exec() {
+    "$__WHI_BIN" "$@"
+}
+
+__whi_apply_transition() {
+    local output
+    if ! output="$(__whi_exec "$@")"; then
+        return $?
+    fi
+
+    local tab=$'\t'
+    local processed=0
+    local line rest var value
+
+    while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        case "$line" in
+            PATH"$tab"*)
+                export PATH="${line#PATH$tab}"
+                processed=1
+                ;;
+            SET"$tab"*)
+                rest=${line#SET$tab}
+                var=${rest%%$tab*}
+                value=${rest#*$tab}
+                if [ "$rest" = "$value" ]; then
+                    value=""
+                fi
+                if [ -n "$var" ]; then
+                    export "$var=$value"
+                fi
+                processed=1
+                ;;
+            UNSET"$tab"*)
+                var=${line#UNSET$tab}
+                if [ -n "$var" ]; then
+                    unset "$var"
+                fi
+                processed=1
+                ;;
+        esac
+    done <<EOF
+$output
+EOF
+
+    if [ $processed -eq 0 ] && [ -n "$output" ]; then
+        __whi_apply_transition_legacy "$output"
+    fi
+
+    return 0
+}
+
+__whi_apply_transition_legacy() {
+    local input="$1"
+    local kind=""
+    local var=""
+    local value=""
+    local line
+
+    while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        case "$line" in
+            kind=*)
+                kind=${line#kind=}
+                ;;
+            var=*)
+                var=${line#var=}
+                var=${var#\'}
+                var=${var%\'}
+                ;;
+            value=*)
+                value=${line#value=}
+                value=${value#\'}
+                value=${value%\'}
+                case "$kind" in
+                    PATH)
+                        export PATH="$var"
+                        ;;
+                    SET)
+                        if [ -n "$var" ]; then
+                            export "$var=$value"
+                        fi
+                        ;;
+                    UNSET)
+                        if [ -n "$var" ]; then
+                            unset "$var"
+                        fi
+                        ;;
+                esac
+                kind=""
+                var=""
+                value=""
+                ;;
+        esac
+    done <<EOF
+$input
+EOF
+
+    return 0
+}
 
 # Load saved PATH first (if it exists)
-# Detect shell and load the appropriate saved_path file
+# This restores your PATH from the previous session
+# Detect shell and load the appropriate saved_path file using whi
 if [ -n "$BASH_VERSION" ]; then
-    [ -f ~/.whi/saved_path_bash ] && export PATH="$(cat ~/.whi/saved_path_bash)"
+    if [ -f ~/.whi/saved_path_bash ]; then
+        NEW_PATH=$(__whi_exec __load_saved_path bash 2>/dev/null)
+        [ -n "$NEW_PATH" ] && export PATH="$NEW_PATH"
+    fi
 elif [ -n "$ZSH_VERSION" ]; then
-    [ -f ~/.whi/saved_path_zsh ] && export PATH="$(cat ~/.whi/saved_path_zsh)"
+    if [ -f ~/.whi/saved_path_zsh ]; then
+        NEW_PATH=$(__whi_exec __load_saved_path zsh 2>/dev/null)
+        [ -n "$NEW_PATH" ] && export PATH="$NEW_PATH"
+    fi
 fi
 
 __whi_apply_path() {
     local subcmd="$1"
     shift
     local new_path
-    new_path=$(command whi "__${subcmd}" "$@")
+    new_path=$(__whi_exec "__${subcmd}" "$@")
     local exit_code=$?
     if [ $exit_code -eq 0 ]; then
         export PATH="$new_path"
     else
         return $exit_code
     fi
+}
+
+__whi_venv_source() {
+    local dir="${1:-.}"
+    __whi_apply_transition __venv_source "$dir"
+}
+
+__whi_venv_exit() {
+    __whi_apply_transition __venv_exit
 }
 
 whim() {
@@ -125,7 +245,7 @@ whid() {
 }
 
 whia() {
-    command whi --all "$@"
+    __whi_exec --all "$@"
 }
 
 whir() {
@@ -336,16 +456,182 @@ whi() {
                 __whi_apply_path delete "$@"
                 return $?
                 ;;
+            source)
+                shift
+                case "$1" in
+                    help|--help|-h)
+                        echo "Usage: whi source"
+                        echo "  Activate venv from whi.file or whi.lock in current directory"
+                        return 0
+                        ;;
+                esac
+                if [ "$#" -ne 0 ]; then
+                    echo "Usage: whi source" >&2
+                    return 2
+                fi
+                __whi_venv_source "$PWD"
+                return $?
+                ;;
+            exit)
+                shift
+                case "$1" in
+                    help|--help|-h)
+                        echo "Usage: whi exit"
+                        echo "  Exit active venv and restore previous PATH"
+                        return 0
+                        ;;
+                esac
+                if [ "$#" -ne 0 ]; then
+                    echo "Usage: whi exit" >&2
+                    return 2
+                fi
+                __whi_venv_exit
+                return $?
+                ;;
+            unlock)
+                shift
+                case "$1" in
+                    help|--help|-h)
+                        echo "Usage: whi unlock"
+                        echo "  Convert whi.lock back to whi.file without leaving the environment"
+                        return 0
+                        ;;
+                esac
+                if [ "$#" -ne 0 ]; then
+                    echo "Usage: whi unlock" >&2
+                    return 2
+                fi
+                __whi_apply_transition __venv_unlock
+                return $?
+                ;;
         esac
     fi
 
-    command whi "$@"
+    __whi_exec "$@"
 }
+
+__whi_prompt() {
+    if [ -n "$WHI_VENV_NAME" ]; then
+        if [ "$WHI_VENV_LOCKED" = "1" ]; then
+            echo "[$WHI_VENV_NAME:locked] "
+        else
+            echo "[$WHI_VENV_NAME] "
+        fi
+    fi
+}
+if [ -n "$BASH_VERSION" ]; then
+    __whi_prompt_command() {
+        local last_status=$?
+        local prefix="$(__whi_prompt)"
+        local current="${PS1-}"
+        if [ "${__WHI_LAST_PROMPT_VALUE-}" != "$current" ]; then
+            __WHI_BASH_BASE_PROMPT="$current"
+        fi
+        if [ -z "${__WHI_BASH_BASE_PROMPT+x}" ]; then
+            __WHI_BASH_BASE_PROMPT="$current"
+        fi
+        PS1="${prefix}${__WHI_BASH_BASE_PROMPT}"
+        __WHI_LAST_PROMPT_VALUE="$PS1"
+        return $last_status
+    }
+
+    if [ -z "${__WHI_PROMPT_INSTALLED:-}" ]; then
+        __WHI_PROMPT_INSTALLED=1
+        __whi_prompt_decl=$(declare -p PROMPT_COMMAND 2>/dev/null || printf '')
+        case "$__whi_prompt_decl" in
+            declare\ -a*)
+                case " ${PROMPT_COMMAND[*]} " in *" __whi_prompt_command "*) ;; *) PROMPT_COMMAND+=("__whi_prompt_command") ;; esac
+                ;;
+            *)
+                if [ -n "${PROMPT_COMMAND:-}" ]; then
+                    case ";$PROMPT_COMMAND;" in *";__whi_prompt_command;"*) ;; *) PROMPT_COMMAND="${PROMPT_COMMAND};__whi_prompt_command" ;; esac
+                else
+                    PROMPT_COMMAND="__whi_prompt_command"
+                fi
+                ;;
+        esac
+        unset __whi_prompt_decl
+    fi
+elif [ -n "$ZSH_VERSION" ]; then
+    __whi_precmd_prompt() {
+        local last_status=$?
+        local prefix="$(__whi_prompt)"
+        local current="$PROMPT"
+        if [ "${__WHI_ZSH_LAST_PROMPT-}" != "$current" ]; then
+            __WHI_ZSH_BASE_PROMPT="$current"
+        fi
+        if [ -z "${__WHI_ZSH_BASE_PROMPT+x}" ]; then
+            __WHI_ZSH_BASE_PROMPT="$current"
+        fi
+        PROMPT="${prefix}${__WHI_ZSH_BASE_PROMPT}"
+        __WHI_ZSH_LAST_PROMPT="$PROMPT"
+        return $last_status
+    }
+
+    if [ -z "${__WHI_PROMPT_INSTALLED:-}" ]; then
+        __WHI_PROMPT_INSTALLED=1
+        autoload -Uz add-zsh-hook 2>/dev/null
+        if typeset -f add-zsh-hook >/dev/null 2>&1; then
+            add-zsh-hook precmd __whi_precmd_prompt 2>/dev/null || case " ${precmd_functions[*]:-} " in *" __whi_precmd_prompt "*) ;; *) precmd_functions+=(__whi_precmd_prompt) ;; esac
+        else
+            typeset -ga precmd_functions 2>/dev/null
+            case " ${precmd_functions[*]:-} " in *" __whi_precmd_prompt "*) ;; *) precmd_functions+=(__whi_precmd_prompt) ;; esac
+        fi
+    fi
+fi
+
+__whi_cd_hook() {
+    # Get auto-activation config
+    local config
+    config=$(__whi_exec __should_auto_activate 2>/dev/null)
+    local auto_file=0
+    local auto_lock=0
+
+    if [[ "$config" =~ file=1 ]]; then
+        auto_file=1
+    fi
+    if [[ "$config" =~ lock=1 ]]; then
+        auto_lock=1
+    fi
+
+    # Check if we should auto-activate or auto-deactivate
+    local has_lock=0
+    local has_file=0
+    [ -f "$PWD/whi.lock" ] && has_lock=1
+    [ -f "$PWD/whi.file" ] && has_file=1
+
+    # If already in a venv, check if we left that directory
+    if [ -n "$WHI_VENV_DIR" ]; then
+        if [ "$PWD" != "$WHI_VENV_DIR" ]; then
+            # Left venv directory, deactivate
+            __whi_venv_exit 2>/dev/null
+        fi
+    fi
+
+    # Auto-activate if configured and not already in venv
+    if [ -z "$WHI_VENV_NAME" ]; then
+        if [ $auto_lock -eq 1 ] && [ $has_lock -eq 1 ]; then
+            __whi_venv_source "$PWD" 2>/dev/null
+        elif [ $auto_file -eq 1 ] && [ $has_file -eq 1 ]; then
+            __whi_venv_source "$PWD" 2>/dev/null
+        fi
+    fi
+}
+
+# Hook cd to check for venv auto-activation
+if [ -n "$BASH_VERSION" ]; then
+    __whi_cd() {
+        builtin cd "$@" && __whi_cd_hook
+    }
+    alias cd='__whi_cd'
+elif [ -n "$ZSH_VERSION" ]; then
+    chpwd_functions+=(__whi_cd_hook)
+fi
 
 if [ -z "$WHI_SHELL_INITIALIZED" ]; then
     export WHI_SHELL_INITIALIZED=1
     export WHI_SESSION_PID=$$
-    command whi __init "$WHI_SESSION_PID" 2>/dev/null
+    __whi_exec __init "$WHI_SESSION_PID" 2>/dev/null
 fi
 
 # IMPORTANT: Add this to the END of your shell config:
