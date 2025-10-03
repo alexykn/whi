@@ -785,6 +785,7 @@ fn handle_delete<W: Write>(
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn handle_apply(shell_opt: Option<&String>, no_protect: bool, force: bool) -> i32 {
     use crate::config::load_config;
     use crate::config_manager::save_path;
@@ -805,7 +806,7 @@ fn handle_apply(shell_opt: Option<&String>, no_protect: bool, force: bool) -> i3
             let current_paths: HashSet<String> = path_var
                 .split(':')
                 .filter(|s| !s.is_empty())
-                .map(|s| s.to_string())
+                .map(std::string::ToString::to_string)
                 .collect();
 
             let protected_paths: Vec<String> = config
@@ -814,10 +815,10 @@ fn handle_apply(shell_opt: Option<&String>, no_protect: bool, force: bool) -> i3
                 .iter()
                 .filter_map(|p| {
                     let path_str = p.to_string_lossy().to_string();
-                    if !current_paths.contains(&path_str) {
-                        Some(path_str)
-                    } else {
+                    if current_paths.contains(&path_str) {
                         None
+                    } else {
+                        Some(path_str)
                     }
                 })
                 .collect();

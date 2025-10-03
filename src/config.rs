@@ -8,13 +8,13 @@ use crate::atomic_file::AtomicFile;
 fn default_protected_paths() -> Vec<PathBuf> {
     #[cfg(target_os = "macos")]
     {
-        return vec![
+        vec![
             PathBuf::from("/usr/local/bin"),
             PathBuf::from("/usr/bin"),
             PathBuf::from("/bin"),
             PathBuf::from("/usr/sbin"),
             PathBuf::from("/sbin"),
-        ];
+        ]
     }
 
     #[cfg(target_os = "linux")]
@@ -35,13 +35,13 @@ fn default_protected_paths() -> Vec<PathBuf> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Config {
     pub venv: VenvConfig,
     pub protected: ProtectedConfig,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct VenvConfig {
     pub auto_activate_file: bool,
 }
@@ -51,27 +51,10 @@ pub struct ProtectedConfig {
     pub paths: Vec<PathBuf>,
 }
 
-impl Default for VenvConfig {
-    fn default() -> Self {
-        Self {
-            auto_activate_file: false,
-        }
-    }
-}
-
 impl Default for ProtectedConfig {
     fn default() -> Self {
         Self {
             paths: default_protected_paths(),
-        }
-    }
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            venv: VenvConfig::default(),
-            protected: ProtectedConfig::default(),
         }
     }
 }
@@ -205,15 +188,9 @@ fn parse_config(content: &str) -> Result<Config, String> {
             let key = key.trim();
             let value = value.trim();
 
-            match current_section.as_str() {
-                "venv" => match key {
-                    "auto_activate_file" => {
-                        config.venv.auto_activate_file = parse_bool(value)?;
-                    }
-                    _ => {} // Ignore unknown keys
-                },
-                _ => {} // Ignore unknown sections
-            }
+            if current_section.as_str() == "venv" && key == "auto_activate_file" {
+                config.venv.auto_activate_file = parse_bool(value)?;
+            } // Ignore unknown keys and sections
         }
     }
 

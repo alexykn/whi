@@ -10,8 +10,8 @@
 /// ENV!
 /// VAR=value
 /// ```
-
 /// Format a PATH string into the human-friendly file format
+#[must_use]
 pub fn format_path_file(path: &str) -> String {
     let mut output = String::from("PATH!\n");
 
@@ -28,7 +28,7 @@ pub fn format_path_file(path: &str) -> String {
 
 /// Parse PATH file - supports both new (PATH!/ENV!) and legacy (colon-separated) formats
 ///
-/// This provides backward compatibility with saved_path and profile files from pre-0.5.0 releases.
+/// This provides backward compatibility with `saved_path` and profile files from pre-0.5.0 releases.
 pub fn parse_path_file(content: &str) -> Result<String, String> {
     let trimmed = content.trim();
 

@@ -45,6 +45,7 @@ impl HistoryContext {
         })
     }
 
+    #[must_use]
     pub fn scope(&self) -> HistoryScope {
         self.scope
     }

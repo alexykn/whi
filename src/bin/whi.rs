@@ -1,6 +1,8 @@
 use std::process;
 
 use clap::{Args as ClapArgs, CommandFactory, Parser, Subcommand, ValueEnum};
+use whi::config_manager::list_profiles;
+use whi::venv_manager;
 
 use whi::app;
 use whi::cli::{self, Args as AppArgs, ColorWhen};
@@ -253,7 +255,7 @@ struct HiddenLoadSavedPathArgs {
     shell: String,
 }
 
-#[derive(ClapArgs, Debug, Default)]
+#[derive(Clone, Copy, ClapArgs, Debug, Default)]
 struct FileArgs {
     /// Force overwriting existing whi.file with current PATH
     #[arg(short = 'f', long = "force")]
@@ -472,8 +474,6 @@ fn run_list_profiles() -> i32 {
         return code;
     }
 
-    use whi::config_manager::list_profiles;
-
     match list_profiles() {
         Ok(profiles) => {
             if profiles.is_empty() {
@@ -631,8 +631,6 @@ fn run_file(opts: FileArgs) -> i32 {
         return code;
     }
 
-    use whi::venv_manager;
-
     match venv_manager::create_file(opts.force) {
         Ok(()) => 0,
         Err(e) => {
@@ -675,17 +673,14 @@ fn run_hidden_venv_exit() -> i32 {
 fn run_should_auto_activate() -> i32 {
     use whi::config::load_config;
 
-    match load_config() {
-        Ok(config) => {
-            let file_val = if config.venv.auto_activate_file { 1 } else { 0 };
-            println!("file={}", file_val);
-            0
-        }
-        Err(_) => {
-            // Default to false on error
-            println!("file=0");
-            0
-        }
+    if let Ok(config) = load_config() {
+        let file_val = i32::from(config.venv.auto_activate_file);
+        println!("file={file_val}");
+        0
+    } else {
+        // Default to false on error
+        println!("file=0");
+        0
     }
 }
 
@@ -717,9 +712,9 @@ fn run_hidden_load_saved_path(args: &HiddenLoadSavedPathArgs) -> i32 {
 fn print_venv_transition(transition: &whi::venv_manager::VenvTransition) {
     println!("PATH\t{}", transition.new_path);
     for (key, value) in &transition.set_vars {
-        println!("SET\t{}\t{}", key, value);
+        println!("SET\t{key}\t{value}");
     }
     for key in &transition.unset_vars {
-        println!("UNSET\t{}", key);
+        println!("UNSET\t{key}");
     }
 }

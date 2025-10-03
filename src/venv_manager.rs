@@ -19,6 +19,7 @@ pub struct VenvTransition {
 }
 
 /// Check if we're in a venv
+#[must_use]
 pub fn is_in_venv() -> bool {
     env::var("WHI_VENV_NAME").is_ok()
 }
@@ -28,7 +29,7 @@ fn get_session_pid() -> u32 {
     env::var("WHI_SESSION_PID")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or_else(|| std::process::id())
+        .unwrap_or_else(std::process::id)
 }
 
 /// Get session directory for this session
@@ -43,7 +44,7 @@ fn get_session_dir(session_pid: u32) -> io::Result<PathBuf> {
 
     // Use UID for additional security
     let uid = system::get_user_id()
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Failed to get user ID: {e}")))?;
+        .map_err(|e| io::Error::other(format!("Failed to get user ID: {e}")))?;
 
     let session_dir = PathBuf::from(format!("{base_dir}/whi-{uid}/session_{session_pid}"));
 
@@ -100,14 +101,13 @@ fn save_venv_info(session_pid: u32, dir: &Path) -> io::Result<()> {
 }
 
 /// Clear venv info
-fn clear_venv_info(session_pid: u32) -> io::Result<()> {
+fn clear_venv_info(session_pid: u32) {
     if let Ok(restore_file) = get_venv_restore_file(session_pid) {
         let _ = fs::remove_file(restore_file);
     }
     if let Ok(dir_file) = get_venv_dir_file(session_pid) {
         let _ = fs::remove_file(dir_file);
     }
-    Ok(())
 }
 
 /// Create whi.file from current PATH
@@ -136,7 +136,7 @@ pub fn create_file(force: bool) -> io::Result<()> {
     atomic_file.commit()?;
 
     let entries = path_var.split(':').filter(|s| !s.is_empty()).count();
-    println!("Saved PATH to ./whi.file ({} entries)", entries);
+    println!("Saved PATH to ./whi.file ({entries} entries)");
 
     Ok(())
 }
@@ -172,10 +172,10 @@ pub fn source_from_path(dir_path: &str) -> io::Result<VenvTransition> {
     })?;
 
     // Get directory name for venv name
-    let venv_name = dir
-        .file_name()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "whi-venv".to_string());
+    let venv_name = dir.file_name().map_or_else(
+        || "whi-venv".to_string(),
+        |s| s.to_string_lossy().into_owned(),
+    );
 
     // Save current PATH for restore
     let session_pid = get_session_pid();
@@ -185,7 +185,7 @@ pub fn source_from_path(dir_path: &str) -> io::Result<VenvTransition> {
 
     HistoryContext::venv(session_pid, dir)
         .and_then(|ctx| ctx.reset_with_initial(&new_path))
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        .map_err(io::Error::other)?;
 
     let set_vars = vec![
         ("WHI_VENV_NAME".to_string(), venv_name),
@@ -215,7 +215,7 @@ pub fn exit_venv() -> io::Result<VenvTransition> {
     let restored_path = restore_venv_path(session_pid)?;
 
     // Clear venv info
-    clear_venv_info(session_pid)?;
+    clear_venv_info(session_pid);
 
     let unset_vars = vec!["WHI_VENV_NAME".to_string(), "WHI_VENV_DIR".to_string()];
 
