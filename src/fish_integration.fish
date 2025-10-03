@@ -2,9 +2,86 @@
 
 # Absolute path to the whi binary is injected by `whi init`
 set -gx __WHI_BIN "__WHI_BIN__"
+set -g __WHI_CONFIG_PATH "$HOME/.whi/config.toml"
+set -g __WHI_AUTO_FILE 0
+set -g __WHI_AUTO_FILE_MTIME ""
+set -g __WHI_STAT_STYLE ""
 
 function __whi_run
     $__WHI_BIN $argv
+end
+
+function __whi_detect_stat_style
+    if test -n "$__WHI_STAT_STYLE"
+        return
+    end
+
+    set -l probe $HOME
+    if test -z "$probe"
+        set probe .
+    end
+
+    command stat -c %Y $probe > /dev/null 2>&1
+    if test $status -eq 0
+        set -g __WHI_STAT_STYLE gnu
+        return
+    end
+
+    command stat -f %m $probe > /dev/null 2>&1
+    if test $status -eq 0
+        set -g __WHI_STAT_STYLE bsd
+        return
+    end
+
+    set -g __WHI_STAT_STYLE none
+end
+
+function __whi_stat_mtime
+    set -l path $argv[1]
+
+    if test -z "$path"
+        return 0
+    end
+
+    if not test -e "$path"
+        return 0
+    end
+
+    __whi_detect_stat_style
+
+    switch $__WHI_STAT_STYLE
+        case gnu
+            set -l result (command stat -c %Y $path 2>/dev/null)
+            if test $status -eq 0 -a -n "$result"
+                echo $result
+            end
+        case bsd
+            set -l result (command stat -f %m $path 2>/dev/null)
+            if test $status -eq 0 -a -n "$result"
+                echo $result
+            end
+    end
+
+    return 0
+end
+
+function __whi_refresh_auto_config
+    set -l output (__whi_run __should_auto_activate 2>/dev/null)
+    set -l first (string split '\n' -- $output)[1]
+    set -l auto_flag 0
+    if string match -rq '^file=1' -- $first
+        set auto_flag 1
+    end
+    set -g __WHI_AUTO_FILE $auto_flag
+
+    if test -n "$__WHI_CONFIG_PATH"
+        set -l mtime (__whi_stat_mtime $__WHI_CONFIG_PATH)
+        if test (count $mtime) -gt 0 -a -n "$mtime[1]"
+            set -g __WHI_AUTO_FILE_MTIME $mtime[1]
+        else
+            set -g __WHI_AUTO_FILE_MTIME ""
+        end
+    end
 end
 
 function __whi_apply_transition
@@ -74,12 +151,21 @@ function __whi_prompt
 end
 
 function __whi_cd_hook --on-variable PWD
-    # Get auto-activation config
-    set -l config (__whi_run __should_auto_activate)
-    set -l auto_file 0
+    if not set -q __WHI_AUTO_FILE
+        __whi_refresh_auto_config
+    end
 
-    if string match -qr 'file=1' -- $config
-        set auto_file 1
+    if test -n "$__WHI_CONFIG_PATH"
+        set -l current_mtime (__whi_stat_mtime $__WHI_CONFIG_PATH)
+        if test (count $current_mtime) -gt 0 -a -n "$current_mtime[1]"
+            set -l current_val $current_mtime[1]
+            if test "$current_val" != "$__WHI_AUTO_FILE_MTIME"
+                __whi_refresh_auto_config
+            end
+        else if test -n "$__WHI_AUTO_FILE_MTIME"
+            set -g __WHI_AUTO_FILE 0
+            set -g __WHI_AUTO_FILE_MTIME ""
+        end
     end
 
     # Check if we should auto-activate or auto-deactivate
@@ -98,12 +184,12 @@ function __whi_cd_hook --on-variable PWD
     end
 
     # Auto-activate if configured and not already in venv
-    if test -z "$WHI_VENV_NAME"
-        if test $auto_file -eq 1 -a $has_file -eq 1
-            __whi_venv_source "$PWD"
-        end
+    if test -z "$WHI_VENV_NAME" -a $__WHI_AUTO_FILE -eq 1 -a $has_file -eq 1
+        __whi_venv_source "$PWD"
     end
 end
+
+__whi_refresh_auto_config
 
 function whim
     if test (count $argv) -ge 1; and contains -- $argv[1] help --help -h

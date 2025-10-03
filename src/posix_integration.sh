@@ -3,8 +3,72 @@
 # Absolute path to the whi binary is injected by `whi init`
 __WHI_BIN="__WHI_BIN__"
 
+__WHI_CONFIG_PATH="${HOME}/.whi/config.toml"
+__WHI_AUTO_FILE=0
+__WHI_AUTO_FILE_MTIME=""
+__WHI_LAST_PWD=""
+__WHI_LAST_HAS_FILE=0
+__WHI_STAT_STYLE=""
+
 __whi_exec() {
     "$__WHI_BIN" "$@"
+}
+
+__whi_detect_stat_style() {
+    [ -n "$__WHI_STAT_STYLE" ] && return 0
+
+    local probe
+    probe="${HOME:-.}"
+
+    if stat -c %Y "$probe" >/dev/null 2>&1; then
+        __WHI_STAT_STYLE="gnu"
+    elif stat -f %m "$probe" >/dev/null 2>&1; then
+        __WHI_STAT_STYLE="bsd"
+    else
+        __WHI_STAT_STYLE="none"
+    fi
+}
+
+__whi_stat_mtime() {
+    local path="$1"
+
+    [ -n "$path" ] && [ -e "$path" ] || return 0
+
+    __whi_detect_stat_style
+
+    local result=""
+    case "$__WHI_STAT_STYLE" in
+        gnu)
+            result=$(stat -c %Y "$path" 2>/dev/null) || result=""
+            ;;
+        bsd)
+            result=$(stat -f %m "$path" 2>/dev/null) || result=""
+            ;;
+        *)
+            :
+            ;;
+    esac
+
+    [ -n "$result" ] && printf '%s\n' "$result"
+    return 0
+}
+
+__whi_refresh_auto_config() {
+    local output
+    output=$(__whi_exec __should_auto_activate 2>/dev/null || printf 'file=0')
+    output=${output%%$'\n'*}
+
+    case "$output" in
+        file=1) __WHI_AUTO_FILE=1 ;;
+        file=0) __WHI_AUTO_FILE=0 ;;
+        *) __WHI_AUTO_FILE=0 ;;
+    esac
+
+    if [ -n "$__WHI_CONFIG_PATH" ]; then
+        local mtime
+        mtime=$(__whi_stat_mtime "$__WHI_CONFIG_PATH")
+        __WHI_AUTO_FILE_MTIME="$mtime"
+    fi
 }
 
 __whi_apply_transition() {
@@ -140,6 +204,8 @@ __whi_venv_source() {
 __whi_venv_exit() {
     __whi_apply_transition __venv_exit
 }
+
+__whi_refresh_auto_config
 
 whim() {
     case "$1" in
@@ -599,37 +665,58 @@ elif [ -n "$ZSH_VERSION" ]; then
 fi
 
 __whi_cd_hook() {
-    # Get auto-activation config
-    local config
-    config=$(__whi_exec __should_auto_activate 2>/dev/null)
-    local auto_file=0
-
-    if [[ "$config" =~ file=1 ]]; then
-        auto_file=1
+    local current_pwd="${PWD:-}"
+    local last_pwd="${__WHI_LAST_PWD-}"
+    local pwd_changed=1
+    if [ -n "$last_pwd" ] && [ "$current_pwd" = "$last_pwd" ]; then
+        pwd_changed=0
     fi
 
-    # Check if we should auto-activate or auto-deactivate
-    local has_file=0
-    [ -f "$PWD/whi.file" ] && has_file=1
+    if [ -n "$__WHI_CONFIG_PATH" ]; then
+        local current_mtime
+        current_mtime=$(__whi_stat_mtime "$__WHI_CONFIG_PATH")
+        if [ -z "$current_mtime" ]; then
+            if [ -n "${__WHI_AUTO_FILE_MTIME-}" ]; then
+                __WHI_AUTO_FILE=0
+                __WHI_AUTO_FILE_MTIME=""
+            fi
+        elif [ "$current_mtime" != "${__WHI_AUTO_FILE_MTIME-}" ]; then
+            __whi_refresh_auto_config
+        fi
+    fi
 
-    # If already in a venv, check if we left that directory
-    if [ -n "$WHI_VENV_DIR" ]; then
-        case "${PWD%/}/" in
+    local has_file=0
+    [ -f "$current_pwd/whi.file" ] && has_file=1
+
+    local file_changed=1
+    if [ -n "${__WHI_LAST_HAS_FILE+x}" ] && [ "${__WHI_LAST_HAS_FILE:-0}" -eq "$has_file" ]; then
+        file_changed=0
+    fi
+
+    if [ $pwd_changed -eq 0 ] && [ $file_changed -eq 0 ]; then
+        __WHI_LAST_PWD="$current_pwd"
+        __WHI_LAST_HAS_FILE=$has_file
+        return 0
+    fi
+
+    if [ -n "$WHI_VENV_DIR" ] && [ $pwd_changed -eq 1 ]; then
+        case "${current_pwd%/}/" in
             "${WHI_VENV_DIR%/}/" | "${WHI_VENV_DIR%/}/"*)
-                ;;  # still inside venv directory tree
+                ;;
             *)
-                # Left venv directory, deactivate
                 __whi_venv_exit 2>/dev/null
                 ;;
         esac
     fi
 
-    # Auto-activate if configured and not already in venv
-    if [ -z "$WHI_VENV_NAME" ]; then
-        if [ $auto_file -eq 1 ] && [ $has_file -eq 1 ]; then
-            __whi_venv_source "$PWD" 2>/dev/null
+    if [ -z "$WHI_VENV_NAME" ] && [ "${__WHI_AUTO_FILE:-0}" -eq 1 ] && [ $has_file -eq 1 ]; then
+        if [ $pwd_changed -eq 1 ] || [ $file_changed -eq 1 ]; then
+            __whi_venv_source "$current_pwd" 2>/dev/null
         fi
     fi
+
+    __WHI_LAST_PWD="$current_pwd"
+    __WHI_LAST_HAS_FILE=$has_file
 }
 
 # Hook cd to check for venv auto-activation
