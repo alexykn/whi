@@ -599,8 +599,10 @@ elif [ -n "$ZSH_VERSION" ]; then
             if [ -z "${__WHI_ZSH_BASE_PROMPT+x}" ]; then
                 __WHI_ZSH_BASE_PROMPT="$current"
             fi
-            # Use %% to escape % and avoid prompt expansion, prepend as literal text
-            PROMPT="${prefix}${__WHI_ZSH_BASE_PROMPT}"
+            # Escape special chars for zsh: replace [ with %{[%} and ] with %{]%} to prevent prompt expansion
+            local escaped_prefix="${prefix//\[/%\{[%\}}"
+            escaped_prefix="${escaped_prefix//\]/%\{]%\}}"
+            PROMPT="${escaped_prefix}${__WHI_ZSH_BASE_PROMPT}"
             __WHI_ZSH_LAST_PROMPT="$PROMPT"
             return $last_status
         }
