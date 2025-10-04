@@ -8,7 +8,16 @@ pub struct PathGuard {
 impl Default for PathGuard {
     fn default() -> Self {
         Self {
-            protected_binaries: vec!["whi".to_string(), "zoxide".to_string()],
+            protected_binaries: vec![
+                // whi itself and common integrations
+                "whi".to_string(),
+                "zoxide".to_string(),
+                // Critical system commands used by shell integrations
+                "seq".to_string(),     // Fish integration (command lookup)
+                "uname".to_string(),   // Fish prompt functions
+                "stat".to_string(),    // Both shells (file metadata)
+                "command".to_string(), // Both shells (command checking)
+            ],
         }
     }
 }

@@ -1,4 +1,4 @@
-# whi shell integration for fish (v0.6.0)
+# whi shell integration for fish (v0.6.1)
 
 # Absolute path to the whi binary is injected by `whi init`
 set -gx __WHI_BIN "__WHI_BIN__"
