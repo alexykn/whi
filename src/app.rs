@@ -914,11 +914,19 @@ fn handle_delete<W: Write>(
     indices_to_delete.sort_unstable();
     indices_to_delete.dedup();
 
-    // Show list of entries being deleted (for multi-delete operations)
-    if !args.silent && indices_to_delete.len() > 1 {
+    // Show deleted paths in diff format (always, even for single deletions)
+    if !args.silent && !indices_to_delete.is_empty() {
+        let use_color = should_use_color(args);
+
+        let (red, reset) = if use_color {
+            ("\x1b[31m", "\x1b[0m")
+        } else {
+            ("", "")
+        };
+
         for &idx in &indices_to_delete {
             if idx > 0 && idx <= dirs.len() {
-                eprintln!("{:>4} {}", format!("[{}]", idx), dirs[idx - 1].display());
+                eprintln!("{red}- {}{reset}", dirs[idx - 1].display());
             }
         }
     }
