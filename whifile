@@ -1,21 +1,49 @@
-PATH!
-/opt/homebrew/bin
-/opt/homebrew/sbin
-/Users/$USER/.bun/bin
-/bin
+# PATH directives (choose ONE approach):
+#
+# !path.replace - Replace entire session PATH
+#   (exclusive: cannot be used with !path.append or !path.prepend)
+#   Protected paths are included by default to prevent system breakage
+#
+!path.replace
+/usr/local/bin
 /usr/bin
+/bin
 /usr/sbin
 /sbin
-/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin
-/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin
-/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin
-/Library/Apple/usr/bin
-/usr/local/share/dotnet
-/opt/podman/bin
-/Applications/Wireshark.app/Contents/MacOS
-/Applications/Ghostty.app/Contents/MacOS
+/Users/$USER/.cargo/bin
 
-ENV!
-TEST_VAR1 1234
+# !path.prepend - Add paths to beginning of session PATH
+#   (can be combined with !path.append)
+#
+# !path.prepend
+# /my/custom/path
+
+# !path.append - Add paths to end of session PATH
+#   (can be combined with !path.prepend)
+#
+# !path.append
+# /another/path
+
+# ENV directives:
+#
+# !env.set - Set environment variables
+#   (can be combined with !env.unset)
+#
+!env.set
+TEST_VAR1 $(pwd)
 TEST_VAR2 $HOME
-TEST_VAR3 $(pwd)
+TEST_VAR3 TEST
+
+# !env.unset - Unset environment variables
+#   (can be combined with !env.set)
+#
+# !env.unset
+# VAR_TO_REMOVE
+
+# !env.replace - Replace entire environment
+#   (exclusive: cannot be used with !env.set or !env.unset)
+#   WARNING: Unsets all non-protected env vars not listed below
+#
+# !env.replace
+# KEY value
+# KEY2 value2
