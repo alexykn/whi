@@ -318,8 +318,7 @@ fn parse_env_line(line: &str, env_list: &mut Vec<(String, String)>) -> Result<()
     // Validate env var name: must start with letter/underscore, contain only alphanumeric/underscore
     if !is_valid_env_name(&key) {
         return Err(format!(
-            "Invalid environment variable name: '{}'. Names must start with a letter or underscore and contain only letters, numbers, and underscores.",
-            key
+            "Invalid environment variable name: '{key}'. Names must start with a letter or underscore and contain only letters, numbers, and underscores."
         ));
     }
 
