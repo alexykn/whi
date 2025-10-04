@@ -8,6 +8,7 @@ use std::os::unix::fs::DirBuilderExt;
 
 use crate::atomic_file::AtomicFile;
 use crate::history::HistoryContext;
+use crate::path_guard::PathGuard;
 
 const WHI_FILE: &str = "whifile";
 
@@ -18,13 +19,71 @@ pub struct VenvTransition {
     pub unset_vars: Vec<String>,
 }
 
+/// Returns the list of protected environment variables that should never be unset
+///
+/// This guard prevents users from accidentally unsetting critical env vars via whifiles.
+/// Similar to how whi's `PATH` is always protected (can't be deleted from PATH).
+///
+/// IMPORTANT: When implementing !env.saved functionality (saving/restoring env vars),
+/// ensure it also uses this guard to avoid saving/restoring protected variables.
+fn protected_env_vars() -> &'static [&'static str] {
+    &[
+        // System critical - universal
+        "PATH",
+        "HOME",
+        "USER",
+        "LOGNAME",
+        "SHELL",
+        "TERM",   // Terminal type - absolutely critical
+        "LANG",   // Locale - affects program behavior
+        "LC_ALL", // Locale overrides
+        "LC_CTYPE",
+        "LC_MESSAGES",
+        "LC_NUMERIC",
+        "LC_COLLATE",
+        "LC_TIME",
+        "IFS", // Internal field separator - DANGEROUS to unset
+        // Shell state
+        "PWD",    // Current directory
+        "OLDPWD", // Previous directory
+        "SHLVL",  // Shell nesting level
+        // Temp directories
+        "TMPDIR", // macOS/BSD standard temp dir
+        "TMP",    // Alternative temp dir
+        "TEMP",   // Windows-style temp dir
+        // Display/GUI (X11/Wayland)
+        "DISPLAY",                  // X11 display
+        "WAYLAND_DISPLAY",          // Wayland display
+        "XDG_RUNTIME_DIR",          // XDG runtime directory
+        "XDG_SESSION_TYPE",         // Session type (x11/wayland)
+        "XAUTHORITY",               // X11 auth cookie
+        "DBUS_SESSION_BUS_ADDRESS", // DBus session bus
+        // SSH
+        "SSH_AUTH_SOCK",  // SSH agent socket - commonly needed
+        "SSH_AGENT_PID",  // SSH agent PID
+        "SSH_CONNECTION", // SSH connection info
+        "SSH_CLIENT",     // SSH client info
+        "SSH_TTY",        // SSH TTY
+        // macOS specific
+        "__CF_USER_TEXT_ENCODING", // Core Foundation text encoding
+        "__CFBundleIdentifier",    // App bundle identifier
+        // Whi shell integration critical
+        "WHI_SHELL_INITIALIZED",
+        "WHI_SESSION_PID",
+        "__WHI_BIN",
+        // Whi venv state (protected when in venv)
+        "WHI_VENV_NAME",
+        "WHI_VENV_DIR",
+    ]
+}
+
 /// Check if we're in a venv
 #[must_use]
 pub fn is_in_venv() -> bool {
     env::var("WHI_VENV_NAME").is_ok()
 }
 
-/// Get session PID from environment
+/// Get session `PID` from environment
 fn get_session_pid() -> u32 {
     env::var("WHI_SESSION_PID")
         .ok()
@@ -82,14 +141,14 @@ fn get_venv_env_keys_file(session_pid: u32) -> io::Result<PathBuf> {
     Ok(get_session_dir(session_pid)?.join("venv_env_keys"))
 }
 
-/// Save PATH for venv restore
+/// Save `PATH` for venv restore
 fn save_venv_restore(session_pid: u32, path: &str) -> io::Result<()> {
     let restore_file = get_venv_restore_file(session_pid)?;
     fs::write(restore_file, path)?;
     Ok(())
 }
 
-/// Restore venv PATH
+/// Restore venv `PATH`
 fn restore_venv_path(session_pid: u32) -> io::Result<String> {
     let restore_file = get_venv_restore_file(session_pid)?;
     let path = fs::read_to_string(restore_file)?;
@@ -259,9 +318,10 @@ pub fn expand_shell_vars(value: &str) -> String {
     result
 }
 
-/// Create whifile from current PATH
+/// Create whifile from current `PATH`
 pub fn create_file(force: bool) -> io::Result<()> {
-    use crate::path_file::format_path_file;
+    use crate::config::load_config;
+    use crate::path_file::default_whifile_template;
 
     let whi_file = Path::new(WHI_FILE);
 
@@ -273,26 +333,33 @@ pub fn create_file(force: bool) -> io::Result<()> {
         ));
     }
 
-    // Get current PATH
-    let path_var = env::var("PATH").unwrap_or_default();
+    // Load config to get protected paths
+    let config = load_config().unwrap_or_default();
+    let protected_paths: Vec<String> = config
+        .protected
+        .paths
+        .iter()
+        .map(|p| p.to_string_lossy().to_string())
+        .collect();
 
-    // Format as human-friendly file
-    let formatted = format_path_file(&path_var);
+    let protected_count = protected_paths.len();
+
+    // Use template with protected paths included
+    let template = default_whifile_template(&protected_paths);
 
     // Write atomically
     let mut atomic_file = AtomicFile::new(whi_file)?;
-    atomic_file.write_all(formatted.as_bytes())?;
+    atomic_file.write_all(template.as_bytes())?;
     atomic_file.commit()?;
 
-    let entries = path_var.split(':').filter(|s| !s.is_empty()).count();
-    println!("Saved PATH to ./whifile ({entries} entries)");
+    println!("Created whifile template with {protected_count} protected paths - edit to customize");
 
     Ok(())
 }
 
 /// Source venv from specific path (used by shell integration)
 pub fn source_from_path(dir_path: &str) -> io::Result<VenvTransition> {
-    use crate::path_file::parse_path_file;
+    use crate::path_file::{apply_path_sections, parse_path_file};
 
     // Check if already in venv
     if is_in_venv() {
@@ -313,6 +380,16 @@ pub fn source_from_path(dir_path: &str) -> io::Result<VenvTransition> {
 
     // Read and parse PATH and ENV vars from file
     let file_content = fs::read_to_string(&path_file)?;
+
+    // Auto-upgrade old format (PATH!/ENV!) to new format (!path.replace/!env.set)
+    let needs_upgrade = file_content
+        .lines()
+        .find(|line| {
+            let trimmed = line.trim();
+            !trimmed.is_empty() && !trimmed.starts_with('#')
+        })
+        .is_some_and(|first_line| first_line.trim() == "PATH!" || first_line.trim() == "ENV!");
+
     let parsed = parse_path_file(&file_content).map_err(|e| {
         io::Error::new(
             io::ErrorKind::InvalidData,
@@ -320,13 +397,44 @@ pub fn source_from_path(dir_path: &str) -> io::Result<VenvTransition> {
         )
     })?;
 
-    // Expand shell variables in PATH entries
-    let expanded_path = parsed
-        .path
+    // If old format detected, convert and write back
+    if needs_upgrade {
+        use crate::atomic_file::AtomicFile;
+        use crate::path_file::format_path_file_with_env;
+
+        // Reconstruct PATH string from parsed data for formatting
+        let path_str = if let Some(ref replace) = parsed.path.replace {
+            replace.join(":")
+        } else {
+            String::new()
+        };
+
+        // Format with new directives
+        let new_content = format_path_file_with_env(&path_str, &parsed.env.set);
+
+        // Write atomically
+        let mut atomic_file = AtomicFile::new(&path_file)?;
+        atomic_file.write_all(new_content.as_bytes())?;
+        atomic_file.commit()?;
+    }
+
+    // Get current session PATH BEFORE activation (used as base for prepend/append and for restore)
+    let session_pid = get_session_pid();
+    let current_path = env::var("PATH").unwrap_or_default();
+
+    // Apply PATH sections to session PATH
+    let computed_path = apply_path_sections(&current_path, &parsed.path)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+
+    // Expand shell variables in computed PATH entries
+    let expanded_path = computed_path
         .split(':')
         .map(expand_shell_vars)
         .collect::<Vec<_>>()
         .join(":");
+
+    // Apply path guard to preserve critical binaries (whi, zoxide)
+    let guarded_path = PathGuard::default().ensure_protected_paths(&current_path, expanded_path);
 
     // Get directory name for venv name
     let venv_name = dir.file_name().map_or_else(
@@ -334,38 +442,64 @@ pub fn source_from_path(dir_path: &str) -> io::Result<VenvTransition> {
         |s| s.to_string_lossy().into_owned(),
     );
 
-    // Save current PATH for restore
-    let session_pid = get_session_pid();
-    let current_path = env::var("PATH").unwrap_or_default();
+    // Save current session PATH for restore (BEFORE activation)
     save_venv_restore(session_pid, &current_path)?;
     save_venv_info(session_pid, dir)?;
 
-    // Save env var keys so we know what to unset on exit
-    let env_keys: Vec<String> = parsed.env_vars.iter().map(|(k, _)| k.clone()).collect();
-    if !env_keys.is_empty() {
-        save_venv_env_keys(session_pid, &env_keys)?;
-    }
-
-    HistoryContext::venv(session_pid, dir)
-        .and_then(|ctx| ctx.reset_with_initial(&expanded_path))
-        .map_err(io::Error::other)?;
-
-    // Build set_vars: venv vars + user env vars
+    // Handle environment variables
     let mut set_vars = vec![
         ("WHI_VENV_NAME".to_string(), venv_name),
         ("WHI_VENV_DIR".to_string(), dir.display().to_string()),
     ];
 
-    // Expand shell variables in env var values
-    for (key, value) in parsed.env_vars {
-        let expanded_value = expand_shell_vars(&value);
-        set_vars.push((key, expanded_value));
+    let mut unset_vars = Vec::new();
+
+    // Handle env.replace (mutually exclusive with set/unset)
+    if let Some(replace_vars) = parsed.env.replace {
+        // Collect all current env var names to unset (except protected ones)
+        let protected = protected_env_vars();
+        for (key, _) in env::vars() {
+            if !protected.contains(&key.as_str()) && !replace_vars.iter().any(|(k, _)| k == &key) {
+                unset_vars.push(key);
+            }
+        }
+        // Set replacement vars (with expansion)
+        for (key, value) in replace_vars {
+            let expanded_value = expand_shell_vars(&value);
+            set_vars.push((key, expanded_value));
+        }
+    } else {
+        // Handle env.set and env.unset
+        for (key, value) in parsed.env.set {
+            let expanded_value = expand_shell_vars(&value);
+            set_vars.push((key, expanded_value));
+        }
+        // Filter protected vars from unset list
+        let protected = protected_env_vars();
+        unset_vars.extend(
+            parsed
+                .env
+                .unset
+                .into_iter()
+                .filter(|var| !protected.contains(&var.as_str())),
+        );
     }
 
+    // Save env var keys so we know what to unset on exit
+    let env_keys: Vec<String> = set_vars.iter().skip(2).map(|(k, _)| k.clone()).collect(); // Skip WHI_VENV_* vars
+    if !env_keys.is_empty() {
+        save_venv_env_keys(session_pid, &env_keys)?;
+    }
+
+    // Reset venv history with computed PATH (isolated from global history)
+    HistoryContext::venv(session_pid, dir)
+        .and_then(|ctx| ctx.reset_with_initial(&guarded_path))
+        .map_err(io::Error::other)?;
+
     Ok(VenvTransition {
-        new_path: expanded_path,
+        new_path: guarded_path,
         set_vars,
-        unset_vars: Vec::new(),
+        unset_vars,
     })
 }
 
@@ -401,7 +535,7 @@ pub fn exit_venv() -> io::Result<VenvTransition> {
     })
 }
 
-/// Update the stored restore PATH for the active venv
+/// Update the stored restore `PATH` for the active venv
 pub fn update_restore_path(new_path: &str) -> io::Result<()> {
     if !is_in_venv() {
         return Ok(());
@@ -610,6 +744,93 @@ mod tests {
         env::remove_var("PATH");
         env::remove_var("TEST_EXPANSION");
         env::remove_var("USER");
+
+        if let Some(val) = xdg_before {
+            env::set_var("XDG_RUNTIME_DIR", val);
+        } else {
+            env::remove_var("XDG_RUNTIME_DIR");
+        }
+    }
+
+    #[test]
+    fn test_protected_env_vars_never_unset() {
+        let _guard = test_mutex().lock().unwrap();
+        let temp_dir = TempDir::new().unwrap();
+        let xdg_before = env::var("XDG_RUNTIME_DIR").ok();
+
+        // Set up session
+        env::set_var("XDG_RUNTIME_DIR", temp_dir.path());
+        env::set_var("WHI_SESSION_PID", "9999");
+        env::set_var("WHI_SHELL_INITIALIZED", "1");
+        env::set_var("__WHI_BIN", "/usr/local/bin/whi");
+        env::set_var("PATH", "/usr/bin:/bin");
+
+        // Create whifile that tries to unset protected vars
+        let whi_file = temp_dir.path().join("whifile");
+        let content = r#"!path.replace
+/new/path
+
+!env.set
+SAFE_VAR safe_value
+
+!env.unset
+WHI_SHELL_INITIALIZED
+WHI_SESSION_PID
+__WHI_BIN
+PATH
+HOME
+USER
+SHELL
+TERM
+TMPDIR
+SSH_AUTH_SOCK
+DISPLAY
+PWD
+IFS
+SAFE_TO_UNSET
+"#;
+        fs::write(&whi_file, content).unwrap();
+
+        // Source the whifile
+        let transition = source_from_path(temp_dir.path().to_str().unwrap()).unwrap();
+
+        // Verify protected vars are NOT in unset_vars
+        let protected_vars_to_test = [
+            "WHI_SHELL_INITIALIZED",
+            "WHI_SESSION_PID",
+            "__WHI_BIN",
+            "PATH",
+            "HOME",
+            "USER",
+            "SHELL",
+            "TERM",
+            "TMPDIR",
+            "SSH_AUTH_SOCK",
+            "DISPLAY",
+            "PWD",
+            "IFS",
+        ];
+
+        for var in protected_vars_to_test {
+            assert!(
+                !transition.unset_vars.contains(&var.to_string()),
+                "{} should never be unset (it's protected)",
+                var
+            );
+        }
+
+        // Verify non-protected vars CAN be unset
+        assert!(
+            transition.unset_vars.contains(&"SAFE_TO_UNSET".to_string()),
+            "Non-protected vars should still be unset-able"
+        );
+
+        // Clean up
+        env::remove_var("WHI_SESSION_PID");
+        env::remove_var("WHI_SHELL_INITIALIZED");
+        env::remove_var("__WHI_BIN");
+        env::remove_var("WHI_VENV_NAME");
+        env::remove_var("WHI_VENV_DIR");
 
         if let Some(val) = xdg_before {
             env::set_var("XDG_RUNTIME_DIR", val);

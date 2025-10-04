@@ -10,6 +10,7 @@ fn default_protected_paths() -> Vec<PathBuf> {
     {
         vec![
             PathBuf::from("/usr/local/bin"),
+            PathBuf::from("/usr/local/sbin"),
             PathBuf::from("/usr/bin"),
             PathBuf::from("/bin"),
             PathBuf::from("/usr/sbin"),
@@ -39,11 +40,27 @@ fn default_protected_paths() -> Vec<PathBuf> {
 pub struct Config {
     pub venv: VenvConfig,
     pub protected: ProtectedConfig,
+    pub search: SearchConfig,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct VenvConfig {
     pub auto_activate_file: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct SearchConfig {
+    pub executable_search_fuzzy: bool,
+    pub variable_search_fuzzy: bool,
+}
+
+impl Default for SearchConfig {
+    fn default() -> Self {
+        Self {
+            executable_search_fuzzy: false,
+            variable_search_fuzzy: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -107,7 +124,7 @@ pub fn ensure_config_exists() -> Result<(), String> {
     Ok(())
 }
 
-/// Generate default config TOML
+/// Generate default config `TOML`
 fn generate_default_config() -> String {
     let defaults = Config::default();
     let path_entries = defaults
@@ -119,13 +136,15 @@ fn generate_default_config() -> String {
         .join(",\n");
 
     format!(
-        "# whi configuration file\n# This file is automatically created with default values\n\n[venv]\n# Auto-activate whifile when entering directory (default: {auto_file})\nauto_activate_file = {auto_file}\n\n[protected]\n# Protected paths are preserved during 'whi apply' even if deleted in session\n# This prevents breaking your shell by accidentally saving a minimal PATH\npaths = [\n{paths}\n]\n",
+        "# whi configuration file\n# This file is automatically created with default values\n\n[venv]\n# Auto-activate whifile when entering directory (default: {auto_file})\nauto_activate_file = {auto_file}\n\n[search]\n# Enable fuzzy search for executables (default: {exec_fuzzy})\n# When enabled: 'whi cargo' finds cargo, cargo-clippy, cargo-fmt, etc.\n# When disabled: 'whi cargo' finds only exact match 'cargo'\nexecutable_search_fuzzy = {exec_fuzzy}\n\n# Enable fuzzy search for variables (default: {var_fuzzy})\n# When enabled: 'whi var cargo' finds CARGO_HOME, CARGO_TARGET_DIR, etc.\n# When disabled: 'whi var cargo' finds only exact match (case-insensitive)\nvariable_search_fuzzy = {var_fuzzy}\n\n[protected]\n# Protected paths are preserved during 'whi apply' even if deleted in session\n# This prevents breaking your shell by accidentally saving a minimal PATH\npaths = [\n{paths}\n]\n",
         auto_file = defaults.venv.auto_activate_file,
+        exec_fuzzy = defaults.search.executable_search_fuzzy,
+        var_fuzzy = defaults.search.variable_search_fuzzy,
         paths = path_entries
     )
 }
 
-/// Minimal TOML parser for our config
+/// Minimal `TOML` parser for our config
 fn parse_config(content: &str) -> Result<Config, String> {
     let mut config = Config::default();
     let mut current_section = String::new();
@@ -190,6 +209,10 @@ fn parse_config(content: &str) -> Result<Config, String> {
 
             if current_section.as_str() == "venv" && key == "auto_activate_file" {
                 config.venv.auto_activate_file = parse_bool(value)?;
+            } else if current_section.as_str() == "search" && key == "executable_search_fuzzy" {
+                config.search.executable_search_fuzzy = parse_bool(value)?;
+            } else if current_section.as_str() == "search" && key == "variable_search_fuzzy" {
+                config.search.variable_search_fuzzy = parse_bool(value)?;
             } // Ignore unknown keys and sections
         }
     }

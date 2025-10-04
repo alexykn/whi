@@ -1,32 +1,63 @@
-/// Human-friendly PATH file format utilities
+/// Human-friendly `PATH` file format utilities
 ///
-/// Format:
+/// Format v2 (0.6.0+):
+/// ```text
+/// !path.replace
+/// /usr/bin
+/// /bin
+///
+/// !env.set
+/// `VAR` value
+/// ```
+///
+/// Legacy format (pre-0.6.0):
 /// ```text
 /// PATH!
 /// /usr/bin
 /// /bin
-/// /usr/local/bin
 ///
 /// ENV!
-/// VAR=value
+/// `VAR` value
 /// ```
-/// Parsed path file containing both PATH and ENV vars
-#[derive(Debug, Clone, PartialEq)]
-pub struct ParsedPathFile {
-    pub path: String,
-    pub env_vars: Vec<(String, String)>,
+/// `PATH` section configuration for whifile
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct PathSections {
+    /// Replace session `PATH` entirely (mutually exclusive with prepend/append)
+    pub replace: Option<Vec<String>>,
+    /// Prepend to session `PATH`
+    pub prepend: Vec<String>,
+    /// Append to session `PATH`
+    pub append: Vec<String>,
 }
 
-/// Format a PATH string into the human-friendly file format
+/// `ENV` section configuration for whifile
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct EnvSections {
+    /// Replace entire environment (mutually exclusive with set/unset)
+    pub replace: Option<Vec<(String, String)>>,
+    /// Set these environment variables
+    pub set: Vec<(String, String)>,
+    /// Unset these environment variables (names only)
+    pub unset: Vec<String>,
+}
+
+/// Parsed path file containing both `PATH` and `ENV` vars
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParsedPathFile {
+    pub path: PathSections,
+    pub env: EnvSections,
+}
+
+/// Format a `PATH` string into the human-friendly file format (v2 format)
 #[must_use]
 pub fn format_path_file(path: &str) -> String {
     format_path_file_with_env(path, &[])
 }
 
-/// Format a PATH string with optional ENV vars into the human-friendly file format
+/// Format a `PATH` string with optional `ENV` vars into the human-friendly file format (v2 format)
 #[must_use]
 pub fn format_path_file_with_env(path: &str, env_vars: &[(String, String)]) -> String {
-    let mut output = String::from("PATH!\n");
+    let mut output = String::from("!path.replace\n");
 
     for entry in path.split(':').filter(|s| !s.is_empty()) {
         output.push_str(entry);
@@ -34,7 +65,7 @@ pub fn format_path_file_with_env(path: &str, env_vars: &[(String, String)]) -> S
     }
 
     // Add ENV section
-    output.push_str("\nENV!\n");
+    output.push_str("\n!env.set\n");
     for (key, value) in env_vars {
         output.push_str(key);
         output.push(' ');
@@ -45,10 +76,70 @@ pub fn format_path_file_with_env(path: &str, env_vars: &[(String, String)]) -> S
     output
 }
 
-/// Parse PATH file - supports both new (PATH!/ENV!) and legacy (colon-separated) formats
+/// Generate default whifile template with commented sections and protected paths
+#[must_use]
+pub fn default_whifile_template(protected_paths: &[String]) -> String {
+    let mut output = String::new();
+
+    // PATH section header with exclusivity rules
+    output.push_str("# PATH directives (choose ONE approach):\n");
+    output.push_str("#\n");
+    output.push_str("# !path.replace - Replace entire session PATH\n");
+    output.push_str("#   (exclusive: cannot be used with !path.append or !path.prepend)\n");
+    output.push_str("#   Protected paths are included by default to prevent system breakage\n");
+    output.push_str("#\n");
+    output.push_str("!path.replace\n");
+
+    // Add protected paths
+    for path in protected_paths {
+        output.push_str(path);
+        output.push('\n');
+    }
+    output.push('\n');
+
+    // Alternative: prepend/append (commented out)
+    output.push_str("# !path.prepend - Add paths to beginning of session PATH\n");
+    output.push_str("#   (can be combined with !path.append)\n");
+    output.push_str("#\n");
+    output.push_str("# !path.prepend\n");
+    output.push_str("# /my/custom/path\n\n");
+
+    output.push_str("# !path.append - Add paths to end of session PATH\n");
+    output.push_str("#   (can be combined with !path.prepend)\n");
+    output.push_str("#\n");
+    output.push_str("# !path.append\n");
+    output.push_str("# /another/path\n\n");
+
+    // ENV section header with exclusivity rules
+    output.push_str("# ENV directives:\n");
+    output.push_str("#\n");
+    output.push_str("# !env.set - Set environment variables\n");
+    output.push_str("#   (can be combined with !env.unset)\n");
+    output.push_str("#\n");
+    output.push_str("!env.set\n");
+    output.push_str("# KEY value\n\n");
+
+    output.push_str("# !env.unset - Unset environment variables\n");
+    output.push_str("#   (can be combined with !env.set)\n");
+    output.push_str("#\n");
+    output.push_str("# !env.unset\n");
+    output.push_str("# VAR_TO_REMOVE\n\n");
+
+    output.push_str("# !env.replace - Replace entire environment\n");
+    output.push_str("#   (exclusive: cannot be used with !env.set or !env.unset)\n");
+    output.push_str("#   WARNING: Unsets all non-protected env vars not listed below\n");
+    output.push_str("#\n");
+    output.push_str("# !env.replace\n");
+    output.push_str("# KEY value\n");
+    output.push_str("# KEY2 value2\n");
+
+    output
+}
+
+/// Parse `PATH` file - supports v2 (!path.replace), v1 (PATH!), and legacy (colon-separated) formats
 ///
-/// Returns `ParsedPathFile` with path string and optional env vars.
-/// This provides backward compatibility with `saved_path` and profile files from pre-0.5.2 releases.
+/// Returns `ParsedPathFile` with path sections and env sections.
+/// This provides backward compatibility with `saved_path` and profile files from all previous releases.
 pub fn parse_path_file(content: &str) -> Result<ParsedPathFile, String> {
     let trimmed = content.trim();
 
@@ -56,18 +147,158 @@ pub fn parse_path_file(content: &str) -> Result<ParsedPathFile, String> {
         return Err("No PATH entries found in file".to_string());
     }
 
-    // Check if this is the new format (starts with PATH!)
-    if trimmed.starts_with("PATH!") {
-        // New format: PATH!\n/path1\n/path2\n\nENV!\n
-        parse_new_format(trimmed)
+    // Find first non-comment, non-empty line to detect format
+    let first_directive = trimmed
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty() && !line.starts_with('#'))
+        .unwrap_or("");
+
+    // Check if this is v2 format (starts with !)
+    if first_directive.starts_with('!') {
+        parse_v2_format(trimmed)
+    } else if first_directive.starts_with("PATH!") {
+        // v1 format (0.5.x): PATH!\n/path1\n/path2\n\nENV!\n - convert to v2
+        parse_v1_format(trimmed)
     } else {
-        // Legacy format: colon-separated string (possibly multi-line)
+        // Legacy format (pre-0.5.0): colon-separated string - convert to v2
         parse_legacy_format(trimmed)
     }
 }
 
-/// Parse new PATH!/ENV! format
-fn parse_new_format(content: &str) -> Result<ParsedPathFile, String> {
+/// Parse v2 format with !path.* and !env.* directives
+fn parse_v2_format(content: &str) -> Result<ParsedPathFile, String> {
+    let mut path_sections = PathSections::default();
+    let mut env_sections = EnvSections::default();
+
+    let mut current_path_section: Option<&str> = None;
+    let mut current_env_section: Option<&str> = None;
+
+    for line in content.lines() {
+        let line = line.trim();
+
+        // Skip empty lines and comments
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        // Check for section headers
+        match line {
+            "!path.replace" | "!path.saved" => {
+                current_path_section = Some("replace");
+                current_env_section = None;
+                continue;
+            }
+            "!path.prepend" => {
+                current_path_section = Some("prepend");
+                current_env_section = None;
+                continue;
+            }
+            "!path.append" => {
+                current_path_section = Some("append");
+                current_env_section = None;
+                continue;
+            }
+            "!env.replace" => {
+                current_path_section = None;
+                current_env_section = Some("replace");
+                continue;
+            }
+            "!env.set" | "!env.saved" => {
+                // NOTE: !env.saved is currently treated as !env.set (not yet fully implemented)
+                // When implementing env var saving/restoration (like PATH saving), ensure it:
+                // 1. Respects protected_env_vars() guard in venv_manager.rs
+                // 2. Never saves/restores WHI_SHELL_INITIALIZED, WHI_SESSION_PID, __WHI_BIN, etc.
+                current_path_section = None;
+                current_env_section = Some("set");
+                continue;
+            }
+            "!env.unset" => {
+                current_path_section = None;
+                current_env_section = Some("unset");
+                continue;
+            }
+            _ => {}
+        }
+
+        // Process content based on current section
+        if let Some(section) = current_path_section {
+            match section {
+                "replace" => {
+                    path_sections
+                        .replace
+                        .get_or_insert_with(Vec::new)
+                        .push(line.to_string());
+                }
+                "prepend" => {
+                    path_sections.prepend.push(line.to_string());
+                }
+                "append" => {
+                    path_sections.append.push(line.to_string());
+                }
+                _ => {}
+            }
+        } else if let Some(section) = current_env_section {
+            match section {
+                "replace" => {
+                    let env_list = env_sections.replace.get_or_insert_with(Vec::new);
+                    parse_env_line(line, env_list);
+                }
+                "set" => {
+                    parse_env_line(line, &mut env_sections.set);
+                }
+                "unset" => {
+                    env_sections.unset.push(line.to_string());
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // Validate mutual exclusivity
+    if path_sections.replace.is_some()
+        && (!path_sections.prepend.is_empty() || !path_sections.append.is_empty())
+    {
+        return Err("Cannot combine !path.replace with !path.prepend or !path.append".to_string());
+    }
+
+    if env_sections.replace.is_some()
+        && (!env_sections.set.is_empty() || !env_sections.unset.is_empty())
+    {
+        return Err("Cannot combine !env.replace with !env.set or !env.unset".to_string());
+    }
+
+    // Must have at least one PATH entry
+    if path_sections.replace.is_none()
+        && path_sections.prepend.is_empty()
+        && path_sections.append.is_empty()
+    {
+        return Err(
+            "No PATH entries found in file (template needs to be edited with actual paths)"
+                .to_string(),
+        );
+    }
+
+    Ok(ParsedPathFile {
+        path: path_sections,
+        env: env_sections,
+    })
+}
+
+/// Parse `ENV` var line: `KEY` value (space-separated, fish-style)
+fn parse_env_line(line: &str, env_list: &mut Vec<(String, String)>) {
+    if let Some(space_idx) = line.find(char::is_whitespace) {
+        let key = line[..space_idx].to_string();
+        let value = line[space_idx..].trim().to_string();
+        env_list.push((key, value));
+    } else {
+        // No value, set to empty string
+        env_list.push((line.to_string(), String::new()));
+    }
+}
+
+/// Parse v1 format (PATH!/ENV!) and convert to v2
+fn parse_v1_format(content: &str) -> Result<ParsedPathFile, String> {
     let mut path_entries = Vec::new();
     let mut env_vars = Vec::new();
     let mut in_path_section = false;
@@ -96,15 +327,7 @@ fn parse_new_format(content: &str) -> Result<ParsedPathFile, String> {
         if in_path_section {
             path_entries.push(line.to_string());
         } else if in_env_section {
-            // Parse ENV var: KEY value (space-separated, fish-style)
-            if let Some(space_idx) = line.find(char::is_whitespace) {
-                let key = line[..space_idx].to_string();
-                let value = line[space_idx..].trim().to_string();
-                env_vars.push((key, value));
-            } else {
-                // No value, set to empty string
-                env_vars.push((line.to_string(), String::new()));
-            }
+            parse_env_line(line, &mut env_vars);
         }
     }
 
@@ -112,30 +335,89 @@ fn parse_new_format(content: &str) -> Result<ParsedPathFile, String> {
         return Err("No PATH entries found in file".to_string());
     }
 
+    // Convert to v2 format: PATH! becomes !path.replace, ENV! becomes !env.set
     Ok(ParsedPathFile {
-        path: path_entries.join(":"),
-        env_vars,
+        path: PathSections {
+            replace: Some(path_entries),
+            prepend: Vec::new(),
+            append: Vec::new(),
+        },
+        env: EnvSections {
+            replace: None,
+            set: env_vars,
+            unset: Vec::new(),
+        },
     })
 }
 
-/// Parse legacy colon-separated format
+/// Apply `PATH` sections to a base `PATH`
+///
+/// - If `replace` is provided, use it as the new `PATH` (ignoring `base_path`)
+/// - Otherwise, start with `base_path` and apply prepend/append
+///
+/// Returns colon-separated `PATH` string with duplicates removed
+pub fn apply_path_sections(base_path: &str, sections: &PathSections) -> Result<String, String> {
+    let mut entries: Vec<String> = Vec::new();
+
+    if let Some(replace_entries) = &sections.replace {
+        // Replace mode: use only these entries
+        entries.clone_from(replace_entries);
+    } else {
+        // Prepend/append mode: start with base PATH
+        let base_entries: Vec<String> = base_path
+            .split(':')
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+            .collect();
+
+        // Prepend entries
+        entries.extend(sections.prepend.iter().cloned());
+
+        // Add base entries
+        entries.extend(base_entries);
+
+        // Append entries
+        entries.extend(sections.append.iter().cloned());
+    }
+
+    // Deduplicate while preserving order
+    let mut seen = std::collections::HashSet::new();
+    let unique_entries: Vec<String> = entries
+        .into_iter()
+        .filter(|e| !e.is_empty() && seen.insert(e.clone()))
+        .collect();
+
+    if unique_entries.is_empty() {
+        return Err("Resulting PATH is empty".to_string());
+    }
+
+    Ok(unique_entries.join(":"))
+}
+
+/// Parse legacy colon-separated format and convert to v2
 fn parse_legacy_format(content: &str) -> Result<ParsedPathFile, String> {
     // Join all lines and split by colon to handle both single and multi-line legacy files
     let all_lines = content.lines().map(str::trim).collect::<Vec<_>>().join("");
 
-    let entries: Vec<&str> = all_lines
+    let entries: Vec<String> = all_lines
         .split(':')
         .map(str::trim)
         .filter(|s| !s.is_empty())
+        .map(String::from)
         .collect();
 
     if entries.is_empty() {
         return Err("No PATH entries found in file".to_string());
     }
 
+    // Convert to v2 format: legacy becomes !path.replace
     Ok(ParsedPathFile {
-        path: entries.join(":"),
-        env_vars: Vec::new(), // Legacy format has no ENV vars
+        path: PathSections {
+            replace: Some(entries),
+            prepend: Vec::new(),
+            append: Vec::new(),
+        },
+        env: EnvSections::default(), // Legacy format has no ENV vars
     })
 }
 
@@ -148,15 +430,16 @@ mod tests {
         let path = "/usr/bin:/bin:/usr/local/bin";
         let formatted = format_path_file(path);
 
-        assert!(formatted.contains("PATH!"));
+        assert!(formatted.contains("!path.replace"));
         assert!(formatted.contains("/usr/bin\n"));
         assert!(formatted.contains("/bin\n"));
         assert!(formatted.contains("/usr/local/bin\n"));
-        assert!(formatted.contains("ENV!"));
+        assert!(formatted.contains("!env.set"));
     }
 
     #[test]
-    fn test_parse_path_file() {
+    fn test_parse_v1_format() {
+        // Test v1 format (PATH!/ENV!) - should convert to v2
         let content = r#"PATH!
 /usr/bin
 /bin
@@ -165,8 +448,11 @@ mod tests {
 ENV!
 "#;
         let parsed = parse_path_file(content).unwrap();
-        assert_eq!(parsed.path, "/usr/bin:/bin:/usr/local/bin");
-        assert!(parsed.env_vars.is_empty());
+        assert_eq!(
+            parsed.path.replace.as_ref().unwrap().join(":"),
+            "/usr/bin:/bin:/usr/local/bin"
+        );
+        assert!(parsed.env.set.is_empty());
     }
 
     #[test]
@@ -174,8 +460,9 @@ ENV!
         let original = "/usr/bin:/bin:/usr/local/bin:/opt/bin";
         let formatted = format_path_file(original);
         let parsed = parse_path_file(&formatted).unwrap();
-        assert_eq!(parsed.path, original);
-        assert!(parsed.env_vars.is_empty());
+        let reconstructed = apply_path_sections("", &parsed.path).unwrap();
+        assert_eq!(reconstructed, original);
+        assert!(parsed.env.set.is_empty());
     }
 
     #[test]
@@ -190,7 +477,10 @@ ENV!
         ENV!
         "#;
         let parsed = parse_path_file(content).unwrap();
-        assert_eq!(parsed.path, "/usr/bin:/bin:/usr/local/bin");
+        assert_eq!(
+            parsed.path.replace.as_ref().unwrap().join(":"),
+            "/usr/bin:/bin:/usr/local/bin"
+        );
     }
 
     #[test]
@@ -212,167 +502,153 @@ ENV!
     }
 
     #[test]
-    fn test_parse_legacy_format_single_line() {
-        // Legacy format from pre-0.5.2 releases
+    fn test_parse_legacy_format() {
         let content = "/usr/bin:/bin:/usr/local/bin";
         let parsed = parse_path_file(content).unwrap();
-        assert_eq!(parsed.path, "/usr/bin:/bin:/usr/local/bin");
-        assert!(parsed.env_vars.is_empty());
+        let result = apply_path_sections("", &parsed.path).unwrap();
+        assert_eq!(result, "/usr/bin:/bin:/usr/local/bin");
+        assert!(parsed.env.set.is_empty());
     }
 
     #[test]
-    fn test_parse_legacy_format_with_whitespace() {
-        let content = "  /usr/bin:/bin:/usr/local/bin  \n";
+    fn test_parse_v2_replace() {
+        let content = r#"!path.replace
+/usr/bin
+/bin
+
+!env.set
+"#;
         let parsed = parse_path_file(content).unwrap();
-        assert_eq!(parsed.path, "/usr/bin:/bin:/usr/local/bin");
-    }
-
-    #[test]
-    fn test_parse_legacy_format_multiline() {
-        // Handle edge case where legacy file might have been edited with newlines
-        let content = "/usr/bin:/bin:\n/usr/local/bin:/opt/bin";
-        let parsed = parse_path_file(content).unwrap();
-        assert_eq!(parsed.path, "/usr/bin:/bin:/usr/local/bin:/opt/bin");
-    }
-
-    #[test]
-    fn test_parse_legacy_format_with_empty_entries() {
-        let content = "/usr/bin::/bin::::/usr/local/bin";
-        let parsed = parse_path_file(content).unwrap();
-        // Empty entries should be filtered out
-        assert_eq!(parsed.path, "/usr/bin:/bin:/usr/local/bin");
-    }
-
-    #[test]
-    fn test_backward_compatibility_upgrade() {
-        // Simulates upgrading from 0.4.x to 0.5.2
-        // Old saved_path file has legacy format, should still work
-        let legacy_content = "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin";
-        let parsed = parse_path_file(legacy_content).unwrap();
-        assert_eq!(parsed.path, legacy_content);
-
-        // New files use new format
-        let new_content = "PATH!\n/usr/bin\n/bin\n/usr/local/bin\n/opt/homebrew/bin\n\nENV!\n";
-        let parsed_new = parse_path_file(new_content).unwrap();
         assert_eq!(
-            parsed_new.path,
-            "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin"
+            parsed.path.replace.as_ref().unwrap().join(":"),
+            "/usr/bin:/bin"
         );
-
-        // Both should produce the same result
-        assert_eq!(parsed.path, parsed_new.path);
+        assert!(parsed.path.prepend.is_empty());
+        assert!(parsed.path.append.is_empty());
     }
 
     #[test]
-    fn test_parse_env_vars() {
-        let content = r#"PATH!
+    fn test_parse_v2_prepend_append() {
+        let content = r#"!path.prepend
+/opt/local/bin
+
+!path.append
+/usr/local/bin
+
+!env.set
+"#;
+        let parsed = parse_path_file(content).unwrap();
+        assert!(parsed.path.replace.is_none());
+        assert_eq!(parsed.path.prepend, vec!["/opt/local/bin"]);
+        assert_eq!(parsed.path.append, vec!["/usr/local/bin"]);
+    }
+
+    #[test]
+    fn test_parse_v2_mutual_exclusivity_error() {
+        let content = r#"!path.replace
+/usr/bin
+
+!path.prepend
+/opt/bin
+"#;
+        let result = parse_path_file(content);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Cannot combine"));
+    }
+
+    #[test]
+    fn test_parse_v2_env_sections() {
+        let content = r#"!path.replace
+/usr/bin
+
+!env.set
+VAR1 value1
+VAR2 value2
+
+!env.unset
+OLD_VAR
+"#;
+        let parsed = parse_path_file(content).unwrap();
+        assert_eq!(parsed.env.set.len(), 2);
+        assert_eq!(parsed.env.unset, vec!["OLD_VAR"]);
+    }
+
+    #[test]
+    fn test_apply_path_sections_replace() {
+        let sections = PathSections {
+            replace: Some(vec!["/usr/bin".to_string(), "/bin".to_string()]),
+            prepend: Vec::new(),
+            append: Vec::new(),
+        };
+        let result = apply_path_sections("/old/path", &sections).unwrap();
+        assert_eq!(result, "/usr/bin:/bin");
+    }
+
+    #[test]
+    fn test_apply_path_sections_prepend_append() {
+        let sections = PathSections {
+            replace: None,
+            prepend: vec!["/opt/bin".to_string()],
+            append: vec!["/usr/local/bin".to_string()],
+        };
+        let result = apply_path_sections("/usr/bin:/bin", &sections).unwrap();
+        assert_eq!(result, "/opt/bin:/usr/bin:/bin:/usr/local/bin");
+    }
+
+    #[test]
+    fn test_apply_path_sections_dedup() {
+        let sections = PathSections {
+            replace: None,
+            prepend: vec!["/usr/bin".to_string()],
+            append: vec!["/bin".to_string()],
+        };
+        let result = apply_path_sections("/usr/bin:/bin", &sections).unwrap();
+        // Should deduplicate, keeping first occurrence
+        assert_eq!(result, "/usr/bin:/bin");
+    }
+
+    #[test]
+    fn test_default_template() {
+        let protected_paths = vec!["/usr/bin".to_string(), "/bin".to_string()];
+        let template = default_whifile_template(&protected_paths);
+        assert!(template.contains("!path.replace\n"));
+        assert!(template.contains("/usr/bin\n"));
+        assert!(template.contains("/bin\n"));
+        assert!(template.contains("# !path.prepend\n"));
+        assert!(template.contains("# !path.append\n"));
+        assert!(template.contains("!env.set\n"));
+        assert!(template.contains("# !env.replace\n"));
+        assert!(template.contains("# !env.unset\n"));
+    }
+
+    #[test]
+    fn test_backward_compat_v1_to_v2() {
+        let v1_content = r#"PATH!
 /usr/bin
 /bin
 
 ENV!
-RUST_LOG debug
-MY_VAR hello world
-EMPTY_VAR
+VAR value
 "#;
-        let parsed = parse_path_file(content).unwrap();
-        assert_eq!(parsed.path, "/usr/bin:/bin");
-        assert_eq!(parsed.env_vars.len(), 3);
+        let parsed = parse_path_file(v1_content).unwrap();
+        // v1 PATH! should convert to !path.replace
+        assert!(parsed.path.replace.is_some());
         assert_eq!(
-            parsed.env_vars[0],
-            ("RUST_LOG".to_string(), "debug".to_string())
+            parsed.path.replace.as_ref().unwrap().join(":"),
+            "/usr/bin:/bin"
         );
-        assert_eq!(
-            parsed.env_vars[1],
-            ("MY_VAR".to_string(), "hello world".to_string())
-        );
-        assert_eq!(parsed.env_vars[2], ("EMPTY_VAR".to_string(), String::new()));
+        // v1 ENV! should convert to !env.set
+        assert_eq!(parsed.env.set.len(), 1);
+        assert_eq!(parsed.env.set[0], ("VAR".to_string(), "value".to_string()));
     }
 
     #[test]
-    fn test_parse_env_vars_with_comments() {
-        let content = r#"PATH!
-/usr/bin
-/bin
-
-ENV!
-# This is a comment
-RUST_LOG debug
-# Another comment
-MY_VAR value
-"#;
-        let parsed = parse_path_file(content).unwrap();
-        assert_eq!(parsed.env_vars.len(), 2);
-        assert_eq!(
-            parsed.env_vars[0],
-            ("RUST_LOG".to_string(), "debug".to_string())
-        );
-        assert_eq!(
-            parsed.env_vars[1],
-            ("MY_VAR".to_string(), "value".to_string())
-        );
-    }
-
-    #[test]
-    fn test_format_with_env_vars() {
-        let env_vars = vec![
-            ("RUST_LOG".to_string(), "debug".to_string()),
-            ("MY_VAR".to_string(), "hello world".to_string()),
-        ];
-        let formatted = format_path_file_with_env("/usr/bin:/bin", &env_vars);
-
-        assert!(formatted.contains("PATH!"));
-        assert!(formatted.contains("/usr/bin\n"));
-        assert!(formatted.contains("/bin\n"));
-        assert!(formatted.contains("ENV!"));
-        assert!(formatted.contains("RUST_LOG debug\n"));
-        assert!(formatted.contains("MY_VAR hello world\n"));
-    }
-
-    #[test]
-    fn test_roundtrip_with_env_vars() {
-        let env_vars = vec![
-            ("RUST_LOG".to_string(), "trace".to_string()),
-            ("PATH_VAR".to_string(), "/some/path".to_string()),
-        ];
-        let formatted = format_path_file_with_env("/usr/bin:/bin:/usr/local/bin", &env_vars);
-        let parsed = parse_path_file(&formatted).unwrap();
-
-        assert_eq!(parsed.path, "/usr/bin:/bin:/usr/local/bin");
-        assert_eq!(parsed.env_vars, env_vars);
-    }
-
-    #[test]
-    fn test_legacy_format_no_env_vars() {
-        let legacy_content = "/usr/bin:/bin:/usr/local/bin";
-        let parsed = parse_path_file(legacy_content).unwrap();
-
-        assert_eq!(parsed.path, "/usr/bin:/bin:/usr/local/bin");
-        assert!(parsed.env_vars.is_empty());
-    }
-
-    #[test]
-    fn test_env_var_with_special_chars() {
-        let content = r#"PATH!
-/usr/bin
-
-ENV!
-VAR1 /path/to/file
-VAR2 value=with=equals
-VAR3 value:with:colons
-"#;
-        let parsed = parse_path_file(content).unwrap();
-        assert_eq!(parsed.env_vars.len(), 3);
-        assert_eq!(
-            parsed.env_vars[0],
-            ("VAR1".to_string(), "/path/to/file".to_string())
-        );
-        assert_eq!(
-            parsed.env_vars[1],
-            ("VAR2".to_string(), "value=with=equals".to_string())
-        );
-        assert_eq!(
-            parsed.env_vars[2],
-            ("VAR3".to_string(), "value:with:colons".to_string())
-        );
+    fn test_backward_compat_legacy_to_v2() {
+        let legacy = "/usr/bin:/bin:/usr/local/bin";
+        let parsed = parse_path_file(legacy).unwrap();
+        // Legacy should convert to !path.replace
+        assert!(parsed.path.replace.is_some());
+        let result = apply_path_sections("", &parsed.path).unwrap();
+        assert_eq!(result, legacy);
     }
 }

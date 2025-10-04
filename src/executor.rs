@@ -4,12 +4,24 @@ use std::path::{Path, PathBuf};
 
 pub struct ExecutableCheck<'a> {
     path: &'a Path,
+    metadata: Option<fs::Metadata>,
 }
 
 impl<'a> ExecutableCheck<'a> {
     #[must_use]
     pub fn new(path: &'a Path) -> Self {
-        ExecutableCheck { path }
+        ExecutableCheck {
+            path,
+            metadata: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_metadata(path: &'a Path, metadata: fs::Metadata) -> Self {
+        ExecutableCheck {
+            path,
+            metadata: Some(metadata),
+        }
     }
 
     #[must_use]
@@ -19,9 +31,13 @@ impl<'a> ExecutableCheck<'a> {
 
     #[must_use]
     pub fn is_executable(&self) -> bool {
-        // Check if it's a regular file or symlink to one
-        let Ok(metadata) = fs::metadata(self.path) else {
-            return false;
+        // Use cached metadata if available, otherwise fetch it
+        let metadata = match &self.metadata {
+            Some(m) => m.clone(),
+            None => match fs::metadata(self.path) {
+                Ok(m) => m,
+                Err(_) => return false,
+            },
         };
 
         if !metadata.is_file() {
@@ -36,7 +52,11 @@ impl<'a> ExecutableCheck<'a> {
 
     #[must_use]
     pub fn get_file_metadata(&self) -> Option<FileMetadata> {
-        let metadata = fs::metadata(self.path).ok()?;
+        // Use cached metadata if available, otherwise fetch it
+        let metadata = match &self.metadata {
+            Some(m) => m.clone(),
+            None => fs::metadata(self.path).ok()?,
+        };
 
         Some(FileMetadata {
             dev: metadata.dev(),

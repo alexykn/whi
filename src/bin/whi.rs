@@ -63,46 +63,55 @@ struct QueryArgs {
     #[arg(short = 'n', long = "no-index")]
     no_index: bool,
 
+    #[arg(short = 'x', long = "swap-fuzzy-exact")]
+    swap_fuzzy: bool,
+
     #[arg(value_name = "NAME")]
     names: Vec<String>,
 }
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// Show PATH changes since session start
+    /// Show `PATH` changes since session start
     #[command(visible_alias = "d")]
     Diff(DiffArgs),
-    /// Save current PATH to shell config files
+    /// Save current `PATH` to shell config files
     Apply(ApplyArgs),
     /// Print help message
     Help,
     /// Make an executable win by path, index, or pattern
     Prefer,
-    /// Move a PATH entry to a different position
+    /// Move a `PATH` entry to a different position
     Move,
-    /// Swap two PATH entries
+    /// Swap two `PATH` entries
     Switch,
-    /// Remove duplicate PATH entries
+    /// Remove duplicate `PATH` entries
     Clean,
-    /// Delete PATH entries by index, path, or pattern
+    /// Delete `PATH` entries by index, path, or pattern
     Delete,
-    /// Reset PATH to initial session state
+    /// Reset `PATH` to initial session state
     Reset,
-    /// Undo last PATH operation(s)
+    /// Undo last `PATH` operation(s)
     Undo(UndoArgs),
-    /// Redo next PATH operation(s)
+    /// Redo next `PATH` operation(s)
     Redo(UndoArgs),
-    /// Save current PATH as a named profile
+    /// Save current `PATH` as a named profile
     Save(SaveProfileArgs),
-    /// Load a saved PATH profile
+    /// Load a saved `PATH` profile
     Load(LoadProfileArgs),
     /// List all saved profiles
     List,
     /// Remove a saved profile
     #[command(name = "rmp")]
     RemoveProfile(RemoveProfileArgs),
-    /// Create whifile from current PATH
+    /// Create whifile from current `PATH`
     File(FileArgs),
+    /// Add paths to `PATH` (prepends by default)
+    Add,
+    /// Query environment variables
+    Var(VarArgs),
+    /// Show all whi shorthand commands
+    Shorthands,
     /// Activate venv from whifile
     Source,
     /// Exit active venv
@@ -137,6 +146,8 @@ enum Command {
     HiddenVenvExit,
     #[command(name = "__load_saved_path", hide = true)]
     HiddenLoadSavedPath(HiddenLoadSavedPathArgs),
+    #[command(name = "__add", hide = true)]
+    HiddenAdd(HiddenAddArgs),
 }
 
 #[derive(ClapArgs, Debug, Default)]
@@ -153,7 +164,7 @@ struct DiffArgs {
 struct ApplyArgs {
     #[arg(value_name = "SHELL")]
     shell: Option<String>,
-    /// Skip protected paths (apply minimal PATH without safety)
+    /// Skip protected paths (apply minimal `PATH` without safety)
     #[arg(long = "no-protect")]
     no_protect: bool,
     /// Apply even if a venv is currently active
@@ -257,9 +268,35 @@ struct HiddenLoadSavedPathArgs {
 
 #[derive(Clone, Copy, ClapArgs, Debug, Default)]
 struct FileArgs {
-    /// Force overwriting existing whifile with current PATH
+    /// Force overwriting existing whifile with current `PATH`
     #[arg(short = 'f', long = "force")]
     force: bool,
+}
+
+#[derive(ClapArgs, Debug)]
+struct HiddenAddArgs {
+    /// Paths to add to `PATH`
+    #[arg(value_name = "PATH", required = true)]
+    paths: Vec<String>,
+}
+
+#[derive(ClapArgs, Debug)]
+struct VarArgs {
+    /// List all environment variables
+    #[arg(short = 'f', long = "full")]
+    full: bool,
+
+    /// Swap fuzzy search method (invert config setting)
+    #[arg(short = 'x', long = "swap-fuzzy-exact")]
+    swap_fuzzy: bool,
+
+    /// Output only value (no key), like echo $VAR
+    #[arg(short = 'n', long = "no-key")]
+    no_key: bool,
+
+    /// Variable name or fuzzy pattern to search for
+    #[arg(value_name = "NAME")]
+    query: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -331,6 +368,7 @@ fn main() {
             | Command::Undo(_)
             | Command::Redo(_)
             | Command::Load(_)
+            | Command::Add
             | Command::Source
             | Command::Exit,
         ) => check_shell_integration().unwrap_or(0),
@@ -353,6 +391,9 @@ fn main() {
         Some(Command::HiddenVenvSource(args)) => run_hidden_venv_source(&args),
         Some(Command::HiddenVenvExit) => run_hidden_venv_exit(),
         Some(Command::HiddenLoadSavedPath(args)) => run_hidden_load_saved_path(&args),
+        Some(Command::HiddenAdd(add_args)) => run_hidden_add(&add_args),
+        Some(Command::Var(var_args)) => run_var(&var_args),
+        Some(Command::Shorthands) => run_shorthands(),
         None => run_query(query),
     };
 
@@ -387,6 +428,7 @@ fn run_query(opts: QueryArgs) -> i32 {
         color: opts.color.unwrap_or(ColorChoice::Auto).into(),
         stat: opts.stat,
         no_index: opts.no_index,
+        swap_fuzzy: opts.swap_fuzzy,
         ..Default::default()
     };
 
@@ -594,6 +636,7 @@ fn run_hidden_load(opts: &HiddenLoadArgs) -> i32 {
     use std::env;
     use whi::config_manager::load_profile;
     use whi::history::HistoryContext;
+    use whi::path_file::apply_path_sections;
 
     let session_pid = env::var("WHI_SESSION_PID")
         .ok()
@@ -602,9 +645,20 @@ fn run_hidden_load(opts: &HiddenLoadArgs) -> i32 {
 
     match load_profile(&opts.name) {
         Ok(parsed) => {
-            // Expand shell variables in PATH entries
-            let expanded_path = parsed
-                .path
+            // Get current PATH to use as base for prepend/append
+            let current_path = env::var("PATH").unwrap_or_default();
+
+            // Apply PATH sections
+            let computed_path = match apply_path_sections(&current_path, &parsed.path) {
+                Ok(path) => path,
+                Err(e) => {
+                    eprintln!("Error applying profile: {e}");
+                    return 2;
+                }
+            };
+
+            // Expand shell variables in computed PATH entries
+            let expanded_path = computed_path
                 .split(':')
                 .map(whi::venv_manager::expand_shell_vars)
                 .collect::<Vec<_>>()
@@ -626,13 +680,22 @@ fn run_hidden_load(opts: &HiddenLoadArgs) -> i32 {
                 }
             }
 
+            // Apply path guard to preserve critical binaries (whi, zoxide)
+            let guarded_path = whi::path_guard::PathGuard::default()
+                .ensure_protected_paths(&current_path, expanded_path);
+
             // Print transition protocol
-            println!("PATH\t{expanded_path}");
-            for (key, value) in &parsed.env_vars {
-                // Expand shell variables in the value
+            println!("PATH\t{guarded_path}");
+
+            // Handle env vars (profiles typically don't have env vars, but support them anyway)
+            for (key, value) in &parsed.env.set {
                 let expanded_value = whi::venv_manager::expand_shell_vars(value);
                 println!("SET\t{key}\t{expanded_value}");
             }
+            for key in &parsed.env.unset {
+                println!("UNSET\t{key}");
+            }
+
             0
         }
         Err(e) => {
@@ -743,7 +806,12 @@ fn run_hidden_load_saved_path(args: &HiddenLoadSavedPathArgs) -> i32 {
 
     match config_manager::load_saved_path_for_shell(&shell) {
         Ok(path) => {
-            println!("{path}");
+            // Apply path guard to preserve critical binaries (whi, zoxide)
+            let current_path = std::env::var("PATH").unwrap_or_default();
+            let guarded_path =
+                whi::path_guard::PathGuard::default().ensure_protected_paths(&current_path, path);
+
+            println!("{guarded_path}");
             0
         }
         Err(e) => {
@@ -751,6 +819,259 @@ fn run_hidden_load_saved_path(args: &HiddenLoadSavedPathArgs) -> i32 {
             1
         }
     }
+}
+
+fn run_hidden_add(args: &HiddenAddArgs) -> i32 {
+    use std::env;
+    use std::path::PathBuf;
+    use whi::history::HistoryContext;
+    use whi::path::PathSearcher;
+    use whi::path_resolver::resolve_path;
+
+    let session_pid = env::var("WHI_SESSION_PID")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or_else(std::process::id);
+
+    // Parse paths from arguments
+    let paths = match whi::cli::parse_add_arguments(args.paths.clone()) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("Error: {e}");
+            return 2;
+        }
+    };
+
+    // Get current PATH and create searcher once
+    let current_path = env::var("PATH").unwrap_or_default();
+    let mut searcher = PathSearcher::new(&current_path);
+
+    // Resolve and add each path (prepend if not already in PATH)
+    let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+
+    for path_str in paths {
+        let resolved = match resolve_path(&path_str, &cwd) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("Warning: Could not resolve path '{path_str}': {e}");
+                // Try to use it as-is
+                PathBuf::from(path_str)
+            }
+        };
+
+        // Check if path is already in current PATH (deduplicate)
+        if searcher.contains(&resolved) {
+            continue; // Skip duplicates
+        }
+
+        // Prepend to PATH (add at index 1, which becomes the new first entry)
+        if let Err(e) = searcher.insert_at(&resolved, 1) {
+            eprintln!("Warning: Could not add '{}': {}", resolved.display(), e);
+        }
+    }
+
+    let new_path = searcher.to_path_string();
+
+    // Update history if not in venv
+    if env::var("WHI_VENV_NAME").is_err() {
+        if let Ok(history) = HistoryContext::global(session_pid) {
+            let _ = history.write_snapshot(&new_path);
+        }
+    } else if let Ok(venv_dir) = env::var("WHI_VENV_DIR") {
+        if let Ok(history) = HistoryContext::venv(session_pid, std::path::Path::new(&venv_dir)) {
+            let _ = history.write_snapshot(&new_path);
+        }
+    }
+
+    // Apply path guard to preserve critical binaries (whi, zoxide)
+    let guarded_path =
+        whi::path_guard::PathGuard::default().ensure_protected_paths(&current_path, new_path);
+
+    // Print raw PATH so shell helper can export it directly
+    println!("{guarded_path}");
+    0
+}
+
+fn run_var(args: &VarArgs) -> i32 {
+    use std::env;
+    use whi::path_resolver::FuzzyMatcher;
+
+    // Load config for fuzzy search settings
+    let config = whi::config::load_config().unwrap_or_default();
+
+    // Validate flags: -f should only be used without a query
+    if args.full && args.query.is_some() {
+        eprintln!("Error: -f/--full flag cannot be used with a variable name");
+        eprintln!();
+        eprintln!("Usage:");
+        eprintln!("  whi var -f             # List all variables");
+        eprintln!("  whi var NAME           # Query specific variable");
+        return 2;
+    }
+
+    // Handle -f/--full flag: list all environment variables
+    if args.full {
+        let mut vars: Vec<(String, String)> = env::vars().collect();
+        vars.sort_by(|a, b| a.0.cmp(&b.0));
+
+        for (key, value) in vars {
+            if args.no_key {
+                println!("{value}");
+            } else {
+                println!("{key} {value}");
+            }
+        }
+        return 0;
+    }
+
+    // If no query provided, show usage
+    let Some(query) = &args.query else {
+        eprintln!("Usage: whi var [-f|--full] [NAME]");
+        eprintln!("  Query environment variables");
+        eprintln!();
+        eprintln!("Options:");
+        eprintln!("  -f, --full    List all environment variables (only valid without NAME)");
+        eprintln!();
+        eprintln!("Examples:");
+        eprintln!("  whi var PATH           # Show PATH variable");
+        eprintln!("  whi var path           # Case-insensitive exact match");
+        eprintln!("  whi var cargo          # Fuzzy search for variables matching 'cargo'");
+        eprintln!("  whi var -f             # List all variables");
+        return 2;
+    };
+
+    // Determine fuzzy mode: config XOR swap flag
+    let use_fuzzy = config.search.variable_search_fuzzy ^ args.swap_fuzzy;
+
+    if use_fuzzy {
+        // Fuzzy search enabled: search directly with fuzzy, no exact check
+        let matcher = FuzzyMatcher::new(query);
+        let mut results: Vec<(String, String)> = env::vars()
+            .filter(|(key, _)| {
+                use std::path::Path;
+                matcher.matches(Path::new(key))
+            })
+            .collect();
+
+        if results.is_empty() {
+            eprintln!("No environment variable matching '{query}' found");
+            return 1;
+        }
+
+        // Sort results by key name
+        results.sort_by(|a, b| a.0.cmp(&b.0));
+
+        for (key, value) in results {
+            if args.no_key {
+                println!("{value}");
+            } else {
+                println!("{key} {value}");
+            }
+        }
+
+        0
+    } else {
+        // Fuzzy disabled: exact match only (case-insensitive)
+        let query_upper = query.to_uppercase();
+
+        for (key, value) in env::vars() {
+            if key.to_uppercase() == query_upper {
+                if args.no_key {
+                    println!("{value}");
+                } else {
+                    println!("{key} {value}");
+                }
+                return 0;
+            }
+        }
+
+        // No exact match found
+        eprintln!("No environment variable matching '{query}' found");
+        1
+    }
+}
+
+struct Shorthand {
+    name: &'static str,
+    command: &'static str,
+    description: &'static str,
+}
+
+const SHORTHANDS: &[Shorthand] = &[
+    Shorthand {
+        name: "whip",
+        command: "whi prefer",
+        description: "Make an executable win",
+    },
+    Shorthand {
+        name: "whim",
+        command: "whi move",
+        description: "Move a PATH entry",
+    },
+    Shorthand {
+        name: "whis",
+        command: "whi switch",
+        description: "Swap two PATH entries",
+    },
+    Shorthand {
+        name: "whic",
+        command: "whi clean",
+        description: "Remove duplicates",
+    },
+    Shorthand {
+        name: "whid",
+        command: "whi delete",
+        description: "Delete PATH entries",
+    },
+    Shorthand {
+        name: "whia",
+        command: "whi --all",
+        description: "Show all matches",
+    },
+    Shorthand {
+        name: "whiad",
+        command: "whi add",
+        description: "Add paths to PATH",
+    },
+    Shorthand {
+        name: "whiu",
+        command: "whi undo",
+        description: "Undo last operation",
+    },
+    Shorthand {
+        name: "whir",
+        command: "whi redo",
+        description: "Redo next operation",
+    },
+    Shorthand {
+        name: "whil",
+        command: "whi load",
+        description: "Load saved profile",
+    },
+    Shorthand {
+        name: "whiv",
+        command: "whi var",
+        description: "Query env variables",
+    },
+    Shorthand {
+        name: "whish",
+        command: "whi shorthands",
+        description: "Show all shortcuts",
+    },
+];
+
+fn run_shorthands() -> i32 {
+    println!("Whi Shorthands:");
+
+    for shorthand in SHORTHANDS {
+        println!(
+            "  {:<6} → {:<14} {}",
+            shorthand.name, shorthand.command, shorthand.description
+        );
+    }
+    println!();
+
+    0
 }
 
 fn print_venv_transition(transition: &whi::venv_manager::VenvTransition) {

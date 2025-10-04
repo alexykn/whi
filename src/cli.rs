@@ -40,6 +40,7 @@ pub struct Args {
     pub color: ColorWhen,
     pub stat: bool,
     pub no_index: bool,
+    pub swap_fuzzy: bool,
     pub move_indices: Option<(usize, usize)>,
     pub swap_indices: Option<(usize, usize)>,
     pub prefer_target: Option<PreferTarget>,
@@ -142,4 +143,14 @@ fn parse_delete_target(target_str: &str) -> DeleteTarget {
 
 fn looks_like_path(s: &str) -> bool {
     s.contains('/') || s.starts_with('~') || s.starts_with('.') || s.contains('\\')
+}
+
+/// Parse arguments for the hidden `__add` command.
+pub fn parse_add_arguments(tokens: Vec<String>) -> Result<Vec<String>, String> {
+    if tokens.is_empty() {
+        return Err("add requires at least one path".to_string());
+    }
+
+    // Return paths as-is, preserving all provided paths
+    Ok(tokens)
 }

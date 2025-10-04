@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 pub struct PathSearcher {
     dirs: Vec<PathBuf>,
+    canon_dirs: std::cell::RefCell<Vec<Option<PathBuf>>>,
 }
 
 /// Validate a `PATH` entry for suspicious or malicious content
@@ -70,12 +71,48 @@ impl PathSearcher {
             eprintln!("Warning: Empty PATH component(s) detected and skipped. Empty components can be a security risk.");
         }
 
-        PathSearcher { dirs }
+        let canon_dirs = std::cell::RefCell::new(vec![None; dirs.len()]);
+        PathSearcher { dirs, canon_dirs }
     }
 
     #[must_use]
     pub fn dirs(&self) -> &[PathBuf] {
         &self.dirs
+    }
+
+    /// Get the canonical path for a directory at the given index (0-based)
+    fn canonicalize_index(&self, idx: usize) -> Option<PathBuf> {
+        let mut cache = self.canon_dirs.borrow_mut();
+        if cache[idx].is_none() {
+            cache[idx] = std::fs::canonicalize(&self.dirs[idx]).ok();
+        }
+        cache[idx].clone()
+    }
+
+    /// Check if a path already exists in `PATH`
+    #[must_use]
+    pub fn contains(&self, path: &std::path::Path) -> bool {
+        self.find_path_index(path).is_some()
+    }
+
+    /// Insert a path at the given position (1-based), mutating this `PathSearcher`
+    /// Returns Err if position is invalid
+    pub fn insert_at(&mut self, path: &std::path::Path, position: usize) -> Result<(), String> {
+        if position == 0 {
+            return Err("Position must be >= 1".to_string());
+        }
+
+        let path_buf = path.to_path_buf();
+
+        // Convert to 0-based index, but cap at the end of the list
+        let insert_idx = (position - 1).min(self.dirs.len());
+
+        self.dirs.insert(insert_idx, path_buf);
+
+        // Update cache size
+        self.canon_dirs.borrow_mut().insert(insert_idx, None);
+
+        Ok(())
     }
 
     pub fn move_entry(&self, from: usize, to: usize) -> Result<String, String> {
@@ -293,8 +330,8 @@ impl PathSearcher {
                 return Some(idx + 1); // Return 1-based index
             }
 
-            // Also try canonicalizing the dir in PATH
-            if let Ok(canonical_dir) = fs::canonicalize(dir) {
+            // Use cached canonicalized dir
+            if let Some(canonical_dir) = self.canonicalize_index(idx) {
                 if canonical_dir == canonical_search {
                     return Some(idx + 1);
                 }

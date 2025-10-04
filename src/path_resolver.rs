@@ -58,6 +58,32 @@ fn normalize_path(path: &Path) -> PathBuf {
     components.iter().collect()
 }
 
+/// Case-insensitive substring search without allocation
+/// Returns the index where needle is found in haystack, or None
+fn find_ci(haystack: &str, needle: &str, start: usize) -> Option<usize> {
+    let haystack_bytes = haystack.as_bytes();
+    let needle_bytes = needle.as_bytes();
+
+    if needle_bytes.is_empty() {
+        return Some(start);
+    }
+
+    let mut pos = start;
+    while pos + needle_bytes.len() <= haystack_bytes.len() {
+        let matches = haystack_bytes[pos..pos + needle_bytes.len()]
+            .iter()
+            .zip(needle_bytes)
+            .all(|(h, n)| h.eq_ignore_ascii_case(n));
+
+        if matches {
+            return Some(pos);
+        }
+        pos += 1;
+    }
+
+    None
+}
+
 /// Performs fuzzy matching on a path using zoxide-style rules
 pub struct FuzzyMatcher {
     query_parts: Vec<String>,
@@ -74,13 +100,13 @@ impl FuzzyMatcher {
     /// Check if a path matches the fuzzy query
     #[must_use]
     pub fn matches(&self, path: &Path) -> bool {
-        let path_str = path.to_string_lossy().to_lowercase();
+        let path_str = path.to_string_lossy();
         let mut position = 0;
 
         for part in &self.query_parts {
-            // Find this part starting from current position
-            if let Some(idx) = path_str[position..].find(part) {
-                position += idx + part.len();
+            // Find this part starting from current position using case-insensitive search
+            if let Some(idx) = find_ci(&path_str, part, position) {
+                position = idx + part.len();
             } else {
                 return false; // Part not found
             }

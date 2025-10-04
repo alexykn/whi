@@ -1,6 +1,6 @@
 # whi
 
-`whi` is a smarter `which` that also lets you rearrange your current shell's `PATH` safely. Install the shell integration once, run the high level commands (`prefer`, `move`, `switch`, `clean`, `delete`, `undo`, `redo`, `reset`, `diff`, `apply`, `save`, `load`), and grab the helper shortcuts if you like terse aliases.
+`whi` is a smarter `which` that also lets you rearrange your current shell's `PATH` safely. Install the shell integration once, run the high level commands (`prefer`, `add`, `move`, `switch`, `clean`, `delete`, `undo`, `redo`, `reset`, `diff`, `apply`, `save`, `load`, `list`, `rmp`, `file`, `source`, `exit`, `var`, `shorthands`), and grab the helper shortcuts if you like terse aliases.
 
 > **Heads up**: mutation commands only run after the integration exports `WHI_SHELL_INITIALIZED=1`. If you see the integration warning, run the snippet for your shell and add it to your config for persistence.
 
@@ -27,7 +27,7 @@ whi init fish | source        # add to the END of ~/.config/fish/config.fish
 
 The snippet:
 - Loads any previously saved PATH (from `~/.whi/saved_path_*`)
-- Defines helper functions (`whip`, `whim`, `whis`, `whiu`, `whir`, `whil`, etc.)
+- Defines helper functions (`whip`, `whiad`, `whia`, `whim`, `whis`, `whiu`, `whir`, `whil`, `whiv`, `whish`, etc.)
 - Exports `WHI_SHELL_INITIALIZED=1` so `whi` knows it's safe to mutate PATH
 - Captures the final PATH as your session baseline for undo/diff tracking
 
@@ -40,8 +40,12 @@ All of these operate on the current shell session. Each command prints the updat
 ```bash
 whi cargo                    # show the first match (with PATH index)
 whi -n cargo                 # no index, same output which gives
-whi -a cargo                 # show all matches (shorthand: whia)
+whi -a cargo                 # show all matches
+# Shorthand: whia
 whi -an cargo                # all matches, no index
+
+# Fuzzy search fallback (if exact match fails)
+whi carg                     # finds "cargo" via fuzzy matching
 
 # Show full path (line separated)
 whi -f                       # list all PATH entries
@@ -66,6 +70,11 @@ Useful flags:
 ### PATH manipulation
 
 ```bash
+# Add paths to PATH (prepends by default)
+whi add ~/.local/bin                 # add single path
+whi add ~/bin ~/.cargo/bin           # add multiple paths
+# Shorthand: whiad
+
 # Prefer: make an executable win (or add a path)
 # The Swiss Army knife - works with index, path, or fuzzy pattern
 # Makes minimal changes to achieve the goal
@@ -121,6 +130,20 @@ whi list                     # list all saved profiles
 whi rmp work                 # remove profile "work"
 ```
 
+### Environment variables
+
+```bash
+# Query environment variables
+whi var PATH                 # show PATH variable (exact match, case-insensitive)
+whi var cargo                # fuzzy search for variables matching 'cargo'
+whi var -f                   # list all environment variables (sorted)
+# Shorthand: whiv
+
+# Show all available shortcuts
+whi shorthands               # display table of all whi* shorthands
+# Shorthand: whish
+```
+
 ### Virtual environments (venv)
 
 `whi` can create project-specific PATH environments similar to Python virtualenvs or direnv, but for PATH management. This is perfect for projects that need specific tool versions or custom PATH configurations.
@@ -161,35 +184,66 @@ auto_activate_file = true  # automatically source whifile when entering director
 
 When enabled, the shell integration will automatically activate venvs when you `cd` into directories containing `whifile`.
 
-**whifile format:**
-The file uses a simple human-friendly format:
+> **Known Issue:** Auto-activation currently does not work in Zsh. Bash and Fish work correctly. For Zsh users, please manually run `whi source` when entering directories with a `whifile`. This will be fixed in a future release.
+
+**whifile format (v2 / 0.6.0+):**
+The file uses a directive-based format with multiple PATH and ENV strategies:
 ```
-PATH!
+# Replace session PATH entirely
+!path.replace
 /usr/local/bin
 /usr/bin
 /bin
 ~/custom/bin
 /Users/$USER/.local/bin
 
-ENV!
+# Or prepend to session PATH
+# !path.prepend
+# ~/my-tools/bin
+
+# Or append to session PATH
+# !path.append
+# ~/extra/bin
+
+# Set environment variables
+!env.set
 # Comments are supported
 RUST_LOG debug
 PROJECT_ROOT $(pwd)
 CONFIG_DIR $HOME/.config/myapp
 MY_VAR hello world
+
+# Or replace all env vars (whitelist mode)
+# !env.replace
+# KEEP_THIS value
+# AND_THIS value
+
+# Or unset specific vars
+# !env.unset
+# REMOVE_THIS
+# AND_THIS
 ```
 
-**PATH! section:**
+**PATH directives (mutually exclusive):**
+- `!path.replace` - Replace session PATH entirely with listed paths
+- `!path.prepend` - Prepend paths to session PATH
+- `!path.append` - Append paths to session PATH
 - Each path is on its own line
 - Supports shell variable expansion: `$VAR`, `${VAR}`, `~`, `$(command)`
 - Variables are expanded when sourcing the venv
 
-**ENV! section:**
+**ENV directives:**
+- `!env.set` - Set specific environment variables (default)
+- `!env.replace` - Replace all env vars (whitelist mode, auto-unsets others)
+- `!env.unset` - Unset specific variables
 - Fish-style syntax: `KEY value` (space-separated, no `=` or quotes needed)
 - Supports shell variable expansion: `$VAR`, `${VAR}`, `~`, `$(command)`, `` `command` ``
 - Values can contain spaces, special characters (`:`, `=`, `/`, etc.)
 - Comments start with `#`
 - Variables are set when entering venv, unset when exiting
+
+**Legacy format support:**
+Files with `PATH!` and `ENV!` sections (pre-0.6.0) are automatically converted to `!path.replace` and `!env.set` for backward compatibility.
 
 ### Shell prompt behaviour
 
@@ -197,7 +251,7 @@ MY_VAR hello world
 - fish: the marker appears in the right-hand prompt, and any prior `fish_right_prompt` output still runs before it.
 - Prompt frameworks (Starship, powerlevel10k, etc.) keep their formatting. Adjust your prompt or redefine `__whi_prompt` if you want a different placement.
 
-`whi --help` shows the verbs (`prefer`, `move`, `switch`, `clean`, `delete`, `undo`, `redo`, `reset`, `diff`, `apply`, `save`, `load`, `list`, `rmp`, `file`, `source`, `exit`). The integration intercepts those public names and rewrites them to the hidden `__…` subcommands that actually mutate the environment.
+`whi --help` shows the verbs (`prefer`, `add`, `move`, `switch`, `clean`, `delete`, `undo`, `redo`, `reset`, `diff`, `apply`, `save`, `load`, `list`, `rmp`, `file`, `source`, `exit`, `var`, `shorthands`). The integration intercepts those public names and rewrites them to the hidden `__…` subcommands that actually mutate the environment.
 
 ## Helper Shortcuts
 
@@ -211,6 +265,8 @@ whip cargo toolchain stable  # prefer by fuzzy pattern
 whip ~/.local/bin            # add path to PATH
 
 # Other shortcuts
+whia cargo                   # -> whi --all cargo
+whiad ~/.local/bin ~/bin     # -> whi add ...
 whim 12 1                    # -> whi move ...
 whis 4 9                     # -> whi switch ...
 whic                         # -> whi clean
@@ -220,16 +276,18 @@ whiu 3                       # -> whi undo 3
 whir                         # -> whi redo
 whir 2                       # -> whi redo 2
 whil work                    # -> whi load work
-whia python                  # -> whi --all python
+whiv PATH                    # -> whi var PATH
+whiv -f                      # -> whi var -f (list all env vars)
+whish                        # -> whi shorthands (show all shortcuts)
 ```
 
 Use whichever spelling you prefer—both routes converge in Rust.
 
 ## Persistence & State
 
-- **Saved PATH files** live in `~/.whi/` (`saved_path_bash`, `saved_path_zsh`, `saved_path_fish`). `whi apply all` writes to all three. Each save creates a `*.bak` backup before overwriting. Files use a human-friendly format with `PATH!` and `ENV!` sections (one path per line). Legacy colon-separated files from pre-0.5.2 are automatically detected and supported for backward compatibility.
+- **Saved PATH files** live in `~/.whi/` (`saved_path_bash`, `saved_path_zsh`, `saved_path_fish`). `whi apply all` writes to all three. Each save creates a `*.bak` backup before overwriting. Files use a human-friendly directive format with `!path.replace` and `!env.set` sections (v0.6.0+). Legacy `PATH!`/`ENV!` format (pre-0.6.0) and colon-separated files (pre-0.6.0) are automatically detected and supported for backward compatibility.
 
-- **Profile storage** lives in `~/.whi/profiles/`. Each profile is a file in the same human-friendly format as saved PATH files. Use `whi save <name>` to save current PATH as a profile, `whi load <name>` to restore it, and `whi list` to see all profiles. You can manually edit these files - list paths under `PATH!` and environment variables under `ENV!` (both support shell variable expansion).
+- **Profile storage** lives in `~/.whi/profiles/`. Each profile is a file in the same human-friendly format as saved PATH files. Use `whi save <name>` to save current PATH as a profile, `whi load <name>` to restore it, and `whi list` to see all profiles. You can manually edit these files - use `!path.replace`/`!path.prepend`/`!path.append` for PATH directives and `!env.set`/`!env.replace`/`!env.unset` for environment variables (all support shell variable expansion).
 
 - **Configuration** lives in `~/.whi/config.toml`. Auto-created on first run with defaults. Controls venv auto-activation and protected paths (preserved during `whi apply` to prevent breaking your shell).
 

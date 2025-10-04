@@ -12,6 +12,7 @@ pub mod output;
 pub mod path;
 pub mod path_diff;
 pub mod path_file;
+pub mod path_guard;
 pub mod path_resolver;
 pub mod session_tracker;
 pub mod shell_detect;

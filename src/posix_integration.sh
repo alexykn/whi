@@ -1,4 +1,4 @@
-# whi shell integration for bash/zsh (v0.5.2)
+# whi shell integration for bash/zsh (v0.6.0)
 
 # Absolute path to the whi binary is injected by `whi init`
 __WHI_BIN="__WHI_BIN__"
@@ -54,6 +54,16 @@ __whi_stat_mtime() {
 }
 
 __whi_refresh_auto_config() {
+    local current_mtime=""
+
+    if [ -n "$__WHI_CONFIG_PATH" ]; then
+        current_mtime=$(__whi_stat_mtime "$__WHI_CONFIG_PATH")
+    fi
+
+    if [ "${__WHI_AUTO_CONFIG_LOADED:-0}" = "1" ] && [ "$current_mtime" = "${__WHI_AUTO_FILE_MTIME-}" ]; then
+        return 0
+    fi
+
     local output
     output=$(__whi_exec __should_auto_activate 2>/dev/null || printf 'file=0')
     output=${output%%$'\n'*}
@@ -64,11 +74,12 @@ __whi_refresh_auto_config() {
         *) __WHI_AUTO_FILE=0 ;;
     esac
 
-    if [ -n "$__WHI_CONFIG_PATH" ]; then
-        local mtime
-        mtime=$(__whi_stat_mtime "$__WHI_CONFIG_PATH")
-        __WHI_AUTO_FILE_MTIME="$mtime"
+    if [ -z "$current_mtime" ]; then
+        __WHI_AUTO_FILE=0
     fi
+
+    __WHI_AUTO_FILE_MTIME="$current_mtime"
+    __WHI_AUTO_CONFIG_LOADED=1
 }
 
 __whi_apply_transition() {
@@ -196,68 +207,135 @@ __whi_apply_path() {
     fi
 }
 
-__whi_venv_source() {
-    local dir="${1:-.}"
-    __whi_apply_transition __venv_source "$dir"
-}
+__whi_handle_move() {
+    local display="$1"
+    shift
 
-__whi_venv_exit() {
-    __whi_apply_transition __venv_exit
-}
-
-__whi_refresh_auto_config
-
-whim() {
-    case "$1" in
+    case "${1-}" in
         help|--help|-h)
-            echo "Usage: whim FROM TO"
+            echo "Usage: $display FROM TO"
             echo "  Move PATH entry from index FROM to index TO"
             return 0
             ;;
     esac
+
     if [ "$#" -ne 2 ]; then
-        echo "Usage: whim FROM TO" >&2
+        echo "Usage: $display FROM TO" >&2
         echo "  Move PATH entry from index FROM to index TO" >&2
         return 2
     fi
 
     __whi_apply_path move "$1" "$2"
+    return $?
 }
 
-whis() {
-    case "$1" in
+__whi_handle_switch() {
+    local display="$1"
+    shift
+
+    case "${1-}" in
         help|--help|-h)
-            echo "Usage: whis IDX1 IDX2"
+            echo "Usage: $display IDX1 IDX2"
             echo "  Swap PATH entries at indices IDX1 and IDX2"
             return 0
             ;;
     esac
+
     if [ "$#" -ne 2 ]; then
-        echo "Usage: whis IDX1 IDX2" >&2
+        echo "Usage: $display IDX1 IDX2" >&2
         echo "  Swap PATH entries at indices IDX1 and IDX2" >&2
         return 2
     fi
 
     __whi_apply_path switch "$1" "$2"
+    return $?
 }
 
-whip() {
-    case "$1" in
+__whi_handle_clean() {
+    local display="$1"
+    shift
+
+    case "${1-}" in
         help|--help|-h)
-            echo "Usage: whip [NAME] TARGET [PATTERN...]"
-            echo "  Add path to PATH or prefer executable at target"
-            echo "  TARGET can be index, path, or fuzzy pattern"
-            echo "Examples:"
-            echo "  whip ~/.cargo/bin           # Add path to PATH (if not present)"
-            echo "  whip cargo 3                # Use cargo from PATH index 3"
-            echo "  whip cargo ~/.cargo/bin     # Add/prefer ~/.cargo/bin for cargo"
-            echo "  whip bat github release     # Use bat from path matching pattern"
+            echo "Usage: $display"
+            echo "  Remove duplicate entries from PATH"
             return 0
             ;;
     esac
+
+    if [ "$#" -ne 0 ]; then
+        echo "Usage: $display" >&2
+        echo "  Remove duplicate entries from PATH" >&2
+        return 2
+    fi
+
+    __whi_apply_path clean
+    return $?
+}
+
+__whi_handle_delete() {
+    local display="$1"
+    shift
+
+    case "${1-}" in
+        help|--help|-h)
+            echo "Usage: $display TARGET [TARGET...]"
+            echo "  TARGET can be index, path, or fuzzy pattern"
+            echo "  Fuzzy patterns delete ALL matching entries"
+            return 0
+            ;;
+    esac
+
     if [ "$#" -lt 1 ]; then
-        echo "Usage: whip [NAME] TARGET [PATTERN...]" >&2
-        echo "  Add path to PATH or prefer executable at target" >&2
+        echo "Usage: $display TARGET [TARGET...]" >&2
+        echo "  TARGET can be index, path, or fuzzy pattern" >&2
+        return 2
+    fi
+
+    __whi_apply_path delete "$@"
+    return $?
+}
+
+__whi_handle_add() {
+    local display="$1"
+    shift
+
+    case "${1-}" in
+        help|--help|-h)
+            echo "Usage: $display PATH..."
+            echo "  Add one or more paths to PATH (prepends by default)"
+            return 0
+            ;;
+    esac
+
+    if [ "$#" -lt 1 ]; then
+        echo "Usage: $display PATH..." >&2
+        return 2
+    fi
+
+    __whi_apply_path add "$@"
+    return $?
+}
+
+__whi_handle_prefer() {
+    local display="$1"
+    shift
+
+    case "${1-}" in
+        help|--help|-h)
+            echo "Usage: $display [NAME] TARGET [PATTERN...]"
+            echo "  Add path to PATH or prefer executable at target"
+            echo "  TARGET can be index, path, or fuzzy pattern"
+            printf '  %s ~/.cargo/bin           # Add path to PATH (if not present)\n' "$display"
+            printf '  %s cargo 3                # Use cargo from PATH index 3\n' "$display"
+            printf '  %s cargo ~/.cargo/bin     # Add/prefer ~/.cargo/bin for cargo\n' "$display"
+            printf '  %s bat github release     # Use bat from path matching pattern\n' "$display"
+            return 0
+            ;;
+    esac
+
+    if [ "$#" -lt 1 ]; then
+        echo "Usage: $display [NAME] TARGET [PATTERN...]" >&2
         echo "  TARGET can be index, path, or fuzzy pattern" >&2
         return 2
     fi
@@ -269,87 +347,123 @@ whip() {
         shift
         __whi_apply_path prefer "$name" "$@"
     fi
+    return $?
+}
+
+__whi_handle_redo() {
+    local display="$1"
+    shift
+
+    case "${1-}" in
+        help|--help|-h)
+            echo "Usage: $display [COUNT]"
+            echo "  Redo next COUNT PATH operations (default: 1)"
+            return 0
+            ;;
+    esac
+
+    if [ "$#" -eq 0 ]; then
+        __whi_apply_path redo 1
+    elif [ "$#" -eq 1 ]; then
+        __whi_apply_path redo "$1"
+    else
+        echo "Usage: $display [COUNT]" >&2
+        echo "  Redo next COUNT PATH operations (default: 1)" >&2
+        return 2
+    fi
+    return $?
+}
+
+__whi_handle_undo() {
+    local display="$1"
+    shift
+
+    case "${1-}" in
+        help|--help|-h)
+            echo "Usage: $display [COUNT]"
+            echo "  Undo last COUNT PATH operations (default: 1)"
+            return 0
+            ;;
+    esac
+
+    if [ "$#" -eq 0 ]; then
+        __whi_apply_path undo 1
+    elif [ "$#" -eq 1 ]; then
+        __whi_apply_path undo "$1"
+    else
+        echo "Usage: $display [COUNT]" >&2
+        echo "  Undo last COUNT PATH operations (default: 1)" >&2
+        return 2
+    fi
+    return $?
+}
+
+__whi_venv_source() {
+    local dir="${1:-.}"
+    __whi_apply_transition __venv_source "$dir"
+}
+
+__whi_venv_exit() {
+    __whi_apply_transition __venv_exit
+}
+
+whim() {
+    __whi_handle_move "whim" "$@"
+}
+
+whis() {
+    __whi_handle_switch "whis" "$@"
+}
+
+whip() {
+    __whi_handle_prefer "whip" "$@"
 }
 
 whic() {
-    case "$1" in
-        help|--help|-h)
-            echo "Usage: whic"
-            echo "  Remove duplicate entries from PATH"
-            return 0
-            ;;
-    esac
-    if [ "$#" -ne 0 ]; then
-        echo "Usage: whic" >&2
-        echo "  Remove duplicate entries from PATH" >&2
-        return 2
-    fi
-    __whi_apply_path clean
+    __whi_handle_clean "whic" "$@"
 }
 
 whid() {
-    case "$1" in
-        help|--help|-h)
-            echo "Usage: whid TARGET [TARGET...]"
-            echo "  TARGET can be index, path, or fuzzy pattern"
-            echo "  Fuzzy patterns delete ALL matching entries"
-            echo "Examples:"
-            echo "  whid 3                      # Delete PATH entry at index 3"
-            echo "  whid 2 5 7                  # Delete multiple indices"
-            echo "  whid ~/.local/bin           # Delete ~/.local/bin from PATH"
-            echo "  whid temp bin               # Delete ALL entries matching pattern"
-            return 0
-            ;;
-    esac
-    if [ "$#" -lt 1 ]; then
-        echo "Usage: whid TARGET [TARGET...]" >&2
-        echo "  TARGET can be index, path, or fuzzy pattern" >&2
-        return 2
-    fi
-
-    __whi_apply_path delete "$@"
+    __whi_handle_delete "whid" "$@"
 }
 
 whia() {
     __whi_exec --all "$@"
 }
 
+whiad() {
+    __whi_handle_add "whiad" "$@"
+}
+
 whir() {
-    case "$1" in
-        help|--help|-h)
-            echo "Usage: whir [COUNT]"
-            echo "  Redo next COUNT PATH operations (default: 1)"
-            return 0
-            ;;
-    esac
-    if [ "$#" -eq 0 ]; then
-        __whi_apply_path redo 1
-    elif [ "$#" -eq 1 ]; then
-        __whi_apply_path redo "$1"
-    else
-        echo "Usage: whir [COUNT]" >&2
-        echo "  Redo next COUNT PATH operations (default: 1)" >&2
-        return 2
-    fi
+    __whi_handle_redo "whir" "$@"
 }
 
 whiu() {
+    __whi_handle_undo "whiu" "$@"
+}
+
+whiv() {
     case "$1" in
         help|--help|-h)
-            echo "Usage: whiu [COUNT]"
-            echo "  Undo last COUNT PATH operations (default: 1)"
+            echo "Usage: whiv [-f|--full] [NAME]"
+            echo "  Query environment variables"
+            echo ""
+            echo "Options:"
+            echo "  -f, --full    List all environment variables"
+            echo ""
+            echo "Examples:"
+            echo "  whiv PATH         # Show PATH variable"
+            echo "  whiv cargo        # Fuzzy search for variables matching 'cargo'"
+            echo "  whiv -f           # List all variables"
             return 0
             ;;
     esac
-    if [ "$#" -eq 0 ]; then
-        __whi_apply_path undo 1
-    elif [ "$#" -eq 1 ]; then
-        __whi_apply_path undo "$1"
-    else
-        echo "Usage: whiu [COUNT]" >&2
-        echo "  Undo last COUNT PATH operations (default: 1)" >&2
-        return 2
-    fi
+    __whi_exec var "$@"
+}
+
+whish() {
+    __whi_exec shorthands "$@"
 }
 
 whil() {
@@ -365,7 +479,7 @@ whil() {
         echo "  Load saved profile NAME" >&2
         return 2
     fi
-    __whi_apply_path load "$1"
+    __whi_apply_transition __load "$1"
 }
 
 whi() {
@@ -389,40 +503,12 @@ whi() {
                 ;;
             undo)
                 shift
-                case "$1" in
-                    help|--help|-h)
-                        echo "Usage: whi undo [COUNT]"
-                        echo "  Undo last COUNT PATH operations (default: 1)"
-                        return 0
-                        ;;
-                esac
-                if [ "$#" -eq 0 ]; then
-                    __whi_apply_path undo 1
-                elif [ "$#" -eq 1 ]; then
-                    __whi_apply_path undo "$1"
-                else
-                    echo "Usage: whi undo [COUNT]" >&2
-                    return 2
-                fi
+                __whi_handle_undo "whi undo" "$@"
                 return $?
                 ;;
             redo)
                 shift
-                case "$1" in
-                    help|--help|-h)
-                        echo "Usage: whi redo [COUNT]"
-                        echo "  Redo next COUNT PATH operations (default: 1)"
-                        return 0
-                        ;;
-                esac
-                if [ "$#" -eq 0 ]; then
-                    __whi_apply_path redo 1
-                elif [ "$#" -eq 1 ]; then
-                    __whi_apply_path redo "$1"
-                else
-                    echo "Usage: whi redo [COUNT]" >&2
-                    return 2
-                fi
+                __whi_handle_redo "whi redo" "$@"
                 return $?
                 ;;
             load)
@@ -438,88 +524,47 @@ whi() {
                     echo "Usage: whi load NAME" >&2
                     return 2
                 fi
-                __whi_apply_path load "$1"
+                __whi_apply_transition __load "$1"
+                return $?
+                ;;
+            add)
+                shift
+                __whi_handle_add "whi add" "$@"
+                return $?
+                ;;
+            var)
+                shift
+                __whi_exec var "$@"
+                return $?
+                ;;
+            shorthands)
+                shift
+                __whi_exec shorthands "$@"
                 return $?
                 ;;
             prefer)
                 shift
-                case "$1" in
-                    help|--help|-h)
-                        echo "Usage: whi prefer [NAME] TARGET [PATTERN...]"
-                        echo "  Add path to PATH or prefer executable at target"
-                        echo "  TARGET can be index, path, or fuzzy pattern"
-                        return 0
-                        ;;
-                esac
-                if [ "$#" -lt 1 ]; then
-                    echo "Usage: whi prefer [NAME] TARGET [PATTERN...]" >&2
-                    return 2
-                fi
-                __whi_apply_path prefer "$@"
+                __whi_handle_prefer "whi prefer" "$@"
                 return $?
                 ;;
             move)
                 shift
-                case "$1" in
-                    help|--help|-h)
-                        echo "Usage: whi move FROM TO"
-                        echo "  Move PATH entry from index FROM to index TO"
-                        return 0
-                        ;;
-                esac
-                if [ "$#" -ne 2 ]; then
-                    echo "Usage: whi move FROM TO" >&2
-                    return 2
-                fi
-                __whi_apply_path move "$@"
+                __whi_handle_move "whi move" "$@"
                 return $?
                 ;;
             switch)
                 shift
-                case "$1" in
-                    help|--help|-h)
-                        echo "Usage: whi switch IDX1 IDX2"
-                        echo "  Swap PATH entries at indices IDX1 and IDX2"
-                        return 0
-                        ;;
-                esac
-                if [ "$#" -ne 2 ]; then
-                    echo "Usage: whi switch IDX1 IDX2" >&2
-                    return 2
-                fi
-                __whi_apply_path switch "$@"
+                __whi_handle_switch "whi switch" "$@"
                 return $?
                 ;;
             clean)
                 shift
-                case "$1" in
-                    help|--help|-h)
-                        echo "Usage: whi clean"
-                        echo "  Remove duplicate entries from PATH"
-                        return 0
-                        ;;
-                esac
-                if [ "$#" -ne 0 ]; then
-                    echo "Usage: whi clean" >&2
-                    return 2
-                fi
-                __whi_apply_path clean "$@"
+                __whi_handle_clean "whi clean" "$@"
                 return $?
                 ;;
             delete)
                 shift
-                case "$1" in
-                    help|--help|-h)
-                        echo "Usage: whi delete TARGET [TARGET...]"
-                        echo "  TARGET can be index, path, or fuzzy pattern"
-                        return 0
-                        ;;
-                esac
-                if [ "$#" -lt 1 ]; then
-                    echo "Usage: whi delete TARGET [TARGET...]" >&2
-                    return 2
-                fi
-                __whi_apply_path delete "$@"
+                __whi_handle_delete "whi delete" "$@"
                 return $?
                 ;;
             source)

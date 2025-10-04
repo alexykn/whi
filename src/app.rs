@@ -8,6 +8,7 @@ use crate::executor::{ExecutableCheck, SearchResult};
 use crate::history::{HistoryContext, HistoryScope};
 use crate::output::OutputFormatter;
 use crate::path::PathSearcher;
+use crate::path_guard::PathGuard;
 use crate::path_resolver;
 use crate::shell_integration;
 use crate::system;
@@ -27,7 +28,7 @@ fn get_session_pid() -> Result<u32, std::io::Error> {
     }
 }
 
-/// Write PATH snapshot to session tracker, with error handling
+/// Write `PATH` snapshot to session tracker, with error handling
 fn write_snapshot_safe(new_path: &str, args: &Args) {
     match history_for_current_scope() {
         Ok(history) => {
@@ -60,14 +61,19 @@ fn history_for_current_scope() -> Result<HistoryContext, String> {
     HistoryContext::global(pid)
 }
 
-/// Output new PATH and flush, returning success code
+/// Output new `PATH` and flush, returning success code
 fn output_path(out: &mut BufWriter<StdoutLock>, new_path: &str) -> i32 {
-    writeln!(out, "{new_path}").ok();
+    // Apply path guard to preserve critical binaries (whi, zoxide)
+    let original_path = env::var("PATH").unwrap_or_default();
+    let guarded_path =
+        PathGuard::default().ensure_protected_paths(&original_path, new_path.to_string());
+
+    writeln!(out, "{guarded_path}").ok();
     out.flush().ok();
     0
 }
 
-/// Handle Result from PATH operation: write snapshot on success, print error on failure
+/// Handle Result from `PATH` operation: write snapshot on success, print error on failure
 fn handle_path_result(
     result: Result<String, String>,
     args: &Args,
@@ -94,6 +100,9 @@ pub fn run(args: &Args) -> i32 {
         eprintln!("Error: {e}");
         return 2;
     }
+
+    // Load config for fuzzy search settings
+    let config = crate::config::load_config().unwrap_or_default();
 
     // Handle init subcommand
     if let Some(ref shell) = args.init_shell {
@@ -221,7 +230,16 @@ pub fn run(args: &Args) -> i32 {
     let mut formatter = OutputFormatter::new(use_color, args.print0);
 
     for name in names {
-        let results = search_name(&searcher, &name, args);
+        // Determine fuzzy mode: config XOR swap flag
+        let use_fuzzy = config.search.executable_search_fuzzy ^ args.swap_fuzzy;
+
+        let results = if !name.contains('/') && use_fuzzy {
+            // Fuzzy search enabled: search directly with fuzzy, no exact check
+            search_name_fuzzy(&searcher, &name, args)
+        } else {
+            // Fuzzy disabled or path query: exact search only
+            search_name(&searcher, &name, args)
+        };
 
         if results.is_empty() {
             all_found = false;
@@ -241,25 +259,78 @@ pub fn run(args: &Args) -> i32 {
             return 3;
         }
 
-        // Output results
-        for (i, result) in results.iter().enumerate() {
-            let is_winner = i == 0;
+        // When fuzzy enabled: group by PATH index, then sort by name within each index
+        // PATH order is ALWAYS respected - we never override it
+        if !name.contains('/') && use_fuzzy {
+            use std::collections::{BTreeMap, HashSet};
 
-            formatter
-                .write_result(
-                    &mut out,
-                    result,
-                    is_winner,
-                    args.follow_symlinks,
-                    !args.no_index,
-                    3, // Always use 3-digit width
-                )
-                .ok();
+            // Group by PATH index (BTreeMap keeps them sorted)
+            let mut by_index: BTreeMap<usize, Vec<&SearchResult>> = BTreeMap::new();
+            for result in &results {
+                by_index.entry(result.path_index).or_default().push(result);
+            }
 
-            // By default, only show the winner (like `which`)
-            // Show all with --all flag or --full flag (full implies all)
-            if (!args.all && !args.full) || args.one {
-                break;
+            // For each index, sort by executable name
+            for index_results in by_index.values_mut() {
+                index_results.sort_by(|a, b| {
+                    let name_a = a.path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                    let name_b = b.path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                    name_a.cmp(name_b)
+                });
+            }
+
+            // Track which executable names we've seen (to determine winners)
+            let mut seen_names: HashSet<String> = HashSet::new();
+
+            // Output in PATH index order (BTreeMap keeps keys sorted)
+            for index_results in by_index.into_values() {
+                for result in &index_results {
+                    let file_name = result
+                        .path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("");
+
+                    // Winner = first occurrence of this executable name
+                    let is_winner = seen_names.insert(file_name.to_string());
+
+                    // Without -a/-f, show ONLY winners
+                    if !args.all && !args.full && !is_winner {
+                        continue; // Skip non-winners
+                    }
+
+                    formatter
+                        .write_result(
+                            &mut out,
+                            result,
+                            is_winner,
+                            args.follow_symlinks,
+                            !args.no_index,
+                            3,
+                        )
+                        .ok();
+                }
+            }
+        } else {
+            // Exact search: show results as before
+            for (i, result) in results.iter().enumerate() {
+                let is_winner = i == 0;
+
+                formatter
+                    .write_result(
+                        &mut out,
+                        result,
+                        is_winner,
+                        args.follow_symlinks,
+                        !args.no_index,
+                        3,
+                    )
+                    .ok();
+
+                // By default, only show the winner
+                if (!args.all && !args.full) || args.one {
+                    break;
+                }
             }
         }
 
@@ -338,6 +409,81 @@ fn search_name(searcher: &PathSearcher, name: &str, args: &Args) -> Vec<SearchRe
             // Stop after first match if not searching for all (like `which`)
             if !search_all {
                 break;
+            }
+        }
+    }
+
+    results
+}
+
+/// Helper to check a directory entry with cached metadata
+fn check_dir_entry(entry: &fs::DirEntry, args: &Args, path_index: usize) -> Option<SearchResult> {
+    let path = entry.path();
+
+    // Use fs::metadata (follows symlinks) instead of entry.metadata() (doesn't follow)
+    // This ensures symlinked executables like /opt/homebrew/bin/zoxide are found
+    let metadata = fs::metadata(&path).ok()?;
+
+    // Only consider files (not directories)
+    if !metadata.is_file() && !args.show_nonexec {
+        return None;
+    }
+
+    let checker = ExecutableCheck::with_metadata(&path, metadata.clone());
+
+    let is_executable = checker.is_executable();
+
+    if !is_executable && !args.show_nonexec {
+        return None;
+    }
+
+    let canonical_path = if args.follow_symlinks {
+        fs::canonicalize(&path).ok()
+    } else {
+        None
+    };
+
+    let file_metadata = if args.stat {
+        checker.get_file_metadata()
+    } else {
+        None
+    };
+
+    Some(SearchResult {
+        path,
+        canonical_path,
+        metadata: file_metadata,
+        path_index,
+    })
+}
+
+/// Fuzzy search for executable names
+fn search_name_fuzzy(searcher: &PathSearcher, query: &str, args: &Args) -> Vec<SearchResult> {
+    use crate::path_resolver::FuzzyMatcher;
+    use std::ffi::OsStr;
+
+    let matcher = FuzzyMatcher::new(query);
+    let mut results = Vec::new();
+
+    // Always collect ALL fuzzy matches - the display logic decides what to show
+    for (idx, dir) in searcher.dirs().iter().enumerate() {
+        // Read directory entries
+        let Ok(entries) = fs::read_dir(dir) else {
+            continue; // Skip directories we can't read
+        };
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+
+            // Check if filename matches fuzzy pattern
+            let Some(filename) = path.file_name().and_then(OsStr::to_str) else {
+                continue;
+            };
+
+            if matcher.matches(&PathBuf::from(filename)) {
+                if let Some(result) = check_dir_entry(&entry, args, idx + 1) {
+                    results.push(result);
+                }
             }
         }
     }
@@ -460,7 +606,12 @@ fn handle_prefer_index<W: Write>(
         Ok(new_path) => {
             write_snapshot_safe(&new_path, args);
 
-            writeln!(out, "{new_path}").ok();
+            // Apply path guard to preserve critical binaries (whi, zoxide)
+            let original_path = env::var("PATH").unwrap_or_default();
+            let guarded_path =
+                PathGuard::default().ensure_protected_paths(&original_path, new_path);
+
+            writeln!(out, "{guarded_path}").ok();
             out.flush().ok();
             0
         }
@@ -557,7 +708,12 @@ fn handle_prefer_exact_path<W: Write>(
 
             write_snapshot_safe(&new_path, args);
 
-            writeln!(out, "{new_path}").ok();
+            // Apply path guard to preserve critical binaries (whi, zoxide)
+            let original_path = env::var("PATH").unwrap_or_default();
+            let guarded_path =
+                PathGuard::default().ensure_protected_paths(&original_path, new_path);
+
+            writeln!(out, "{guarded_path}").ok();
             out.flush().ok();
             0
         }
@@ -616,7 +772,12 @@ fn handle_prefer_path_only<W: Write>(
 
             write_snapshot_safe(&new_path, args);
 
-            writeln!(out, "{new_path}").ok();
+            // Apply path guard to preserve critical binaries (whi, zoxide)
+            let original_path = env::var("PATH").unwrap_or_default();
+            let guarded_path =
+                PathGuard::default().ensure_protected_paths(&original_path, new_path);
+
+            writeln!(out, "{guarded_path}").ok();
             out.flush().ok();
             0
         }
@@ -772,7 +933,12 @@ fn handle_delete<W: Write>(
         Ok(new_path) => {
             write_snapshot_safe(&new_path, args);
 
-            writeln!(out, "{new_path}").ok();
+            // Apply path guard to preserve critical binaries (whi, zoxide)
+            let original_path = env::var("PATH").unwrap_or_default();
+            let guarded_path =
+                PathGuard::default().ensure_protected_paths(&original_path, new_path);
+
+            writeln!(out, "{guarded_path}").ok();
             out.flush().ok();
             0
         }
@@ -801,12 +967,14 @@ fn handle_apply(shell_opt: Option<&String>, no_protect: bool, force: bool) -> i3
     let mut path_var = env::var("PATH").unwrap_or_default();
 
     // Apply protected paths unless --no-protect is set
+    // Protection is silent - just ensures configured paths are present
     if !no_protect {
         if let Ok(config) = load_config() {
+            // Normalize paths by removing trailing slashes for comparison
             let current_paths: HashSet<String> = path_var
                 .split(':')
                 .filter(|s| !s.is_empty())
-                .map(std::string::ToString::to_string)
+                .map(|s| s.trim_end_matches('/').to_string())
                 .collect();
 
             let protected_paths: Vec<String> = config
@@ -815,7 +983,8 @@ fn handle_apply(shell_opt: Option<&String>, no_protect: bool, force: bool) -> i3
                 .iter()
                 .filter_map(|p| {
                     let path_str = p.to_string_lossy().to_string();
-                    if current_paths.contains(&path_str) {
+                    let normalized = path_str.trim_end_matches('/');
+                    if current_paths.contains(normalized) {
                         None
                     } else {
                         Some(path_str)
@@ -824,16 +993,8 @@ fn handle_apply(shell_opt: Option<&String>, no_protect: bool, force: bool) -> i3
                 .collect();
 
             if !protected_paths.is_empty() {
-                // Insert protected paths at the beginning
-                let protected_count = protected_paths.len();
+                // Silently insert protected paths at the beginning
                 path_var = format!("{}:{}", protected_paths.join(":"), path_var);
-
-                eprintln!(
-                    "Protected {} system path{}: {}",
-                    protected_count,
-                    if protected_count == 1 { "" } else { "s" },
-                    protected_paths.join(", ")
-                );
             }
         }
     }
@@ -1145,7 +1306,19 @@ fn handle_load_profile(profile_name: &str) -> i32 {
 
     match load_profile(profile_name) {
         Ok(parsed) => {
-            let mut path_string = parsed.path;
+            use crate::path_file::apply_path_sections;
+
+            // Get current PATH to use as base for prepend/append
+            let current_path = env::var("PATH").unwrap_or_default();
+
+            // Apply PATH sections
+            let mut path_string = match apply_path_sections(&current_path, &parsed.path) {
+                Ok(path) => path,
+                Err(e) => {
+                    eprintln!("Error applying profile: {e}");
+                    return 2;
+                }
+            };
             // Self-protection: ensure current whi directory is in PATH (silently append if missing)
             if let Some(exe_dir) = get_current_exe_dir() {
                 let canonical_exe_dir =
@@ -1192,7 +1365,13 @@ fn handle_load_profile(profile_name: &str) -> i32 {
 
             let stdout = io::stdout();
             let mut out = BufWriter::new(stdout.lock());
-            writeln!(out, "{path_string}").ok();
+
+            // Apply path guard to preserve critical binaries (whi, zoxide)
+            let original_path = env::var("PATH").unwrap_or_default();
+            let guarded_path =
+                PathGuard::default().ensure_protected_paths(&original_path, path_string);
+
+            writeln!(out, "{guarded_path}").ok();
             out.flush().ok();
             0
         }
@@ -1235,5 +1414,104 @@ mod atty {
     pub enum Stream {
         Stdout,
         Stdin,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_protected_path_normalization() {
+        // Test that paths with/without trailing slashes are treated as equal
+        let current = "/usr/local/sbin/:/usr/bin:/bin";
+        let protected = vec![PathBuf::from("/usr/local/sbin")];
+
+        let current_paths: HashSet<String> = current
+            .split(':')
+            .filter(|s| !s.is_empty())
+            .map(|s| s.trim_end_matches('/').to_string())
+            .collect();
+
+        let missing: Vec<String> = protected
+            .iter()
+            .filter_map(|p| {
+                let path_str = p.to_string_lossy().to_string();
+                let normalized = path_str.trim_end_matches('/');
+                if current_paths.contains(normalized) {
+                    None
+                } else {
+                    Some(path_str)
+                }
+            })
+            .collect();
+
+        // Should recognize /usr/local/sbin/ matches /usr/local/sbin
+        assert!(
+            missing.is_empty(),
+            "Expected no missing paths, found: {:?}",
+            missing
+        );
+    }
+
+    #[test]
+    fn test_protected_path_missing() {
+        // Test that missing protected paths are detected
+        let current = "/usr/bin:/bin";
+        let protected = vec![PathBuf::from("/usr/local/sbin")];
+
+        let current_paths: HashSet<String> = current
+            .split(':')
+            .filter(|s| !s.is_empty())
+            .map(|s| s.trim_end_matches('/').to_string())
+            .collect();
+
+        let missing: Vec<String> = protected
+            .iter()
+            .filter_map(|p| {
+                let path_str = p.to_string_lossy().to_string();
+                let normalized = path_str.trim_end_matches('/');
+                if current_paths.contains(normalized) {
+                    None
+                } else {
+                    Some(path_str)
+                }
+            })
+            .collect();
+
+        assert_eq!(missing.len(), 1, "Expected 1 missing path");
+        assert_eq!(missing[0], "/usr/local/sbin");
+    }
+
+    #[test]
+    fn test_protected_path_already_present() {
+        // Test that existing protected paths are not duplicated
+        let current = "/usr/local/sbin:/usr/bin:/bin";
+        let protected = vec![PathBuf::from("/usr/local/sbin")];
+
+        let current_paths: HashSet<String> = current
+            .split(':')
+            .filter(|s| !s.is_empty())
+            .map(|s| s.trim_end_matches('/').to_string())
+            .collect();
+
+        let missing: Vec<String> = protected
+            .iter()
+            .filter_map(|p| {
+                let path_str = p.to_string_lossy().to_string();
+                let normalized = path_str.trim_end_matches('/');
+                if current_paths.contains(normalized) {
+                    None
+                } else {
+                    Some(path_str)
+                }
+            })
+            .collect();
+
+        assert!(
+            missing.is_empty(),
+            "Expected no missing paths when already present"
+        );
     }
 }
