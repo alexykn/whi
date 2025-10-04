@@ -317,8 +317,24 @@ fn parse_env_line(line: &str, env_list: &mut Vec<(String, String)>) -> Result<()
 
     // Validate env var name: must start with letter/underscore, contain only alphanumeric/underscore
     if !is_valid_env_name(&key) {
+        // Check for common mistakes and give helpful suggestions
+        let suggestion = if key.contains('=') {
+            let parts: Vec<&str> = key.splitn(2, '=').collect();
+            if parts.len() == 2 {
+                format!(". Try '{} {}' instead", parts[0], parts[1])
+            } else {
+                String::new()
+            }
+        } else if key.contains('-') {
+            format!(". Hyphens are not allowed, use underscores instead")
+        } else if key.chars().next().map_or(false, |c| c.is_ascii_digit()) {
+            format!(". Variable names cannot start with a number")
+        } else {
+            String::new()
+        };
+
         return Err(format!(
-            "Invalid environment variable name: '{key}'. Names must start with a letter or underscore and contain only letters, numbers, and underscores."
+            "Invalid environment variable name: '{key}'{suggestion}"
         ));
     }
 
@@ -689,6 +705,7 @@ VAR value
         let err = result.unwrap_err();
         assert!(err.contains("Invalid environment variable name"));
         assert!(err.contains("2INVALID"));
+        assert!(err.contains("Variable names cannot start with a number"));
     }
 
     #[test]
@@ -698,6 +715,7 @@ VAR value
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.contains("Invalid environment variable name"));
+        assert!(err.contains("Hyphens are not allowed, use underscores instead"));
     }
 
     #[test]
@@ -707,6 +725,7 @@ VAR value
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.contains("Invalid environment variable name"));
+        assert!(err.contains("Try 'SPS2_ALLOW_HTTP 1' instead"));
     }
 
     #[test]
