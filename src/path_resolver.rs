@@ -132,7 +132,11 @@ impl FuzzyMatcher {
 /// Determines if a string looks like an exact path (not a fuzzy pattern)
 #[must_use]
 pub fn looks_like_exact_path(s: &str) -> bool {
-    s.contains('/') || s.starts_with('~') || s.starts_with('.') || s.contains('\\')
+    s.contains('/')
+        || s.starts_with('~')
+        || s.starts_with("./")
+        || s.starts_with("../")
+        || s.contains('\\')
 }
 
 #[cfg(test)]
@@ -181,12 +185,20 @@ mod tests {
 
     #[test]
     fn test_looks_like_exact_path() {
+        // Exact paths
         assert!(looks_like_exact_path("/usr/bin"));
         assert!(looks_like_exact_path("~/bin"));
         assert!(looks_like_exact_path("./target"));
         assert!(looks_like_exact_path("../bin"));
+
+        // Fuzzy patterns (not paths)
         assert!(!looks_like_exact_path("cargo"));
         assert!(!looks_like_exact_path("users cargo"));
+
+        // Hidden files/dirs should be fuzzy patterns (not paths)
+        assert!(!looks_like_exact_path(".go"));
+        assert!(!looks_like_exact_path(".cargo"));
+        assert!(!looks_like_exact_path(".config"));
     }
 
     #[test]
