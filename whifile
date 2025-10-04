@@ -1,8 +1,7 @@
 PATH!
-/home/linuxbrew/.linuxbrew/bin
 /opt/homebrew/bin
 /opt/homebrew/sbin
-/Users/alxknt/.bun/bin
+/Users/$USER/.bun/bin
 /bin
 /usr/bin
 /usr/sbin
@@ -17,3 +16,6 @@ PATH!
 /Applications/Ghostty.app/Contents/MacOS
 
 ENV!
+TEST_VAR1 1234
+TEST_VAR2 $HOME
+TEST_VAR3 $(pwd)

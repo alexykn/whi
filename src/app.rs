@@ -1144,7 +1144,8 @@ fn handle_load_profile(profile_name: &str) -> i32 {
     use std::io::Write;
 
     match load_profile(profile_name) {
-        Ok(mut path_string) => {
+        Ok(parsed) => {
+            let mut path_string = parsed.path;
             // Self-protection: ensure current whi directory is in PATH (silently append if missing)
             if let Some(exe_dir) = get_current_exe_dir() {
                 let canonical_exe_dir =

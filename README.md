@@ -168,13 +168,28 @@ PATH!
 /usr/local/bin
 /usr/bin
 /bin
+~/custom/bin
+/Users/$USER/.local/bin
 
 ENV!
-KEY=value
-ANOTHER=value
+# Comments are supported
+RUST_LOG debug
+PROJECT_ROOT $(pwd)
+CONFIG_DIR $HOME/.config/myapp
+MY_VAR hello world
 ```
 
-Each path is on its own line under the `PATH!` section. You can manually edit these files. The `ENV!` section is reserved for future use (environment variables).
+**PATH! section:**
+- Each path is on its own line
+- Supports shell variable expansion: `$VAR`, `${VAR}`, `~`, `$(command)`
+- Variables are expanded when sourcing the venv
+
+**ENV! section:**
+- Fish-style syntax: `KEY value` (space-separated, no `=` or quotes needed)
+- Supports shell variable expansion: `$VAR`, `${VAR}`, `~`, `$(command)`, `` `command` ``
+- Values can contain spaces, special characters (`:`, `=`, `/`, etc.)
+- Comments start with `#`
+- Variables are set when entering venv, unset when exiting
 
 ### Shell prompt behaviour
 
@@ -212,9 +227,9 @@ Use whichever spelling you prefer—both routes converge in Rust.
 
 ## Persistence & State
 
-- **Saved PATH files** live in `~/.whi/` (`saved_path_bash`, `saved_path_zsh`, `saved_path_fish`). `whi apply all` writes to all three. Each save creates a `*.bak` backup before overwriting. Files use a human-friendly format with `PATH!` and `ENV!` sections (one path per line). Legacy colon-separated files from pre-0.5.1 are automatically detected and supported for backward compatibility.
+- **Saved PATH files** live in `~/.whi/` (`saved_path_bash`, `saved_path_zsh`, `saved_path_fish`). `whi apply all` writes to all three. Each save creates a `*.bak` backup before overwriting. Files use a human-friendly format with `PATH!` and `ENV!` sections (one path per line). Legacy colon-separated files from pre-0.5.2 are automatically detected and supported for backward compatibility.
 
-- **Profile storage** lives in `~/.whi/profiles/`. Each profile is a file in the same human-friendly format as saved PATH files. Use `whi save <name>` to save current PATH as a profile, `whi load <name>` to restore it, and `whi list` to see all profiles. You can manually edit these files - just list one path per line under the `PATH!` section.
+- **Profile storage** lives in `~/.whi/profiles/`. Each profile is a file in the same human-friendly format as saved PATH files. Use `whi save <name>` to save current PATH as a profile, `whi load <name>` to restore it, and `whi list` to see all profiles. You can manually edit these files - list paths under `PATH!` and environment variables under `ENV!` (both support shell variable expansion).
 
 - **Configuration** lives in `~/.whi/config.toml`. Auto-created on first run with defaults. Controls venv auto-activation and protected paths (preserved during `whi apply` to prevent breaking your shell).
 

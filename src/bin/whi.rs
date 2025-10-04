@@ -346,7 +346,7 @@ fn main() {
         Some(Command::HiddenReset) => run_hidden_reset(),
         Some(Command::HiddenUndo(undo_args)) => run_hidden_undo(&undo_args),
         Some(Command::HiddenRedo(redo_args)) => run_hidden_redo(&redo_args),
-        Some(Command::HiddenLoad(load_args)) => run_hidden_load(load_args),
+        Some(Command::HiddenLoad(load_args)) => run_hidden_load(&load_args),
         Some(Command::HiddenInit(args)) => run_hidden_init(&args),
         Some(Command::File(file_args)) => run_file(file_args),
         Some(Command::HiddenShouldAutoActivate) => run_should_auto_activate(),
@@ -590,12 +590,56 @@ fn run_hidden_redo(opts: &HiddenRedoArgs) -> i32 {
     app::run(&args)
 }
 
-fn run_hidden_load(opts: HiddenLoadArgs) -> i32 {
-    let args = AppArgs {
-        load_profile: Some(opts.name),
-        ..Default::default()
-    };
-    app::run(&args)
+fn run_hidden_load(opts: &HiddenLoadArgs) -> i32 {
+    use std::env;
+    use whi::config_manager::load_profile;
+    use whi::history::HistoryContext;
+
+    let session_pid = env::var("WHI_SESSION_PID")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or_else(std::process::id);
+
+    match load_profile(&opts.name) {
+        Ok(parsed) => {
+            // Expand shell variables in PATH entries
+            let expanded_path = parsed
+                .path
+                .split(':')
+                .map(whi::venv_manager::expand_shell_vars)
+                .collect::<Vec<_>>()
+                .join(":");
+
+            // Update history if not in venv
+            if env::var("WHI_VENV_NAME").is_err() {
+                if let Ok(history) = HistoryContext::global(session_pid) {
+                    let _ = history.write_snapshot(&expanded_path);
+                }
+            } else {
+                // In venv - update venv history
+                if let Ok(venv_dir) = env::var("WHI_VENV_DIR") {
+                    if let Ok(history) =
+                        HistoryContext::venv(session_pid, std::path::Path::new(&venv_dir))
+                    {
+                        let _ = history.write_snapshot(&expanded_path);
+                    }
+                }
+            }
+
+            // Print transition protocol
+            println!("PATH\t{expanded_path}");
+            for (key, value) in &parsed.env_vars {
+                // Expand shell variables in the value
+                let expanded_value = whi::venv_manager::expand_shell_vars(value);
+                println!("SET\t{key}\t{expanded_value}");
+            }
+            0
+        }
+        Err(e) => {
+            eprintln!("Error: {e}");
+            2
+        }
+    }
 }
 
 fn run_hidden_init(args: &HiddenInitArgs) -> i32 {

@@ -1,4 +1,4 @@
-# whi shell integration for bash/zsh (v0.5.1)
+# whi shell integration for bash/zsh (v0.5.2)
 
 # Absolute path to the whi binary is injected by `whi init`
 __WHI_BIN="__WHI_BIN__"

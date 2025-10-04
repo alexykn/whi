@@ -166,7 +166,7 @@ pub fn save_profile(profile_name: &str, path: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn load_profile(profile_name: &str) -> Result<String, String> {
+pub fn load_profile(profile_name: &str) -> Result<crate::path_file::ParsedPathFile, String> {
     use crate::path_file::parse_path_file;
 
     if profile_name.is_empty() {
@@ -256,7 +256,8 @@ pub fn load_saved_path_for_shell(shell: &Shell) -> Result<String, String> {
     let content = fs::read_to_string(&saved_path_file)
         .map_err(|e| format!("Failed to read saved PATH file: {e}"))?;
 
-    parse_path_file(&content)
+    // Only return PATH string (ignore env vars for saved_path - it's just baseline PATH)
+    parse_path_file(&content).map(|parsed| parsed.path)
 }
 
 #[cfg(test)]
