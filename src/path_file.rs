@@ -242,10 +242,10 @@ fn parse_v2_format(content: &str) -> Result<ParsedPathFile, String> {
             match section {
                 "replace" => {
                     let env_list = env_sections.replace.get_or_insert_with(Vec::new);
-                    parse_env_line(line, env_list);
+                    parse_env_line(line, env_list)?;
                 }
                 "set" => {
-                    parse_env_line(line, &mut env_sections.set);
+                    parse_env_line(line, &mut env_sections.set)?;
                 }
                 "unset" => {
                     env_sections.unset.push(line.to_string());
@@ -285,16 +285,46 @@ fn parse_v2_format(content: &str) -> Result<ParsedPathFile, String> {
     })
 }
 
+/// Validate environment variable name
+fn is_valid_env_name(name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+
+    let mut chars = name.chars();
+    // First character must be letter or underscore
+    if let Some(first) = chars.next() {
+        if !first.is_ascii_alphabetic() && first != '_' {
+            return false;
+        }
+    }
+
+    // Rest must be alphanumeric or underscore
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
 /// Parse `ENV` var line: `KEY` value (space-separated, fish-style)
-fn parse_env_line(line: &str, env_list: &mut Vec<(String, String)>) {
-    if let Some(space_idx) = line.find(char::is_whitespace) {
+/// Returns error if KEY contains invalid characters
+fn parse_env_line(line: &str, env_list: &mut Vec<(String, String)>) -> Result<(), String> {
+    let (key, value) = if let Some(space_idx) = line.find(char::is_whitespace) {
         let key = line[..space_idx].to_string();
         let value = line[space_idx..].trim().to_string();
-        env_list.push((key, value));
+        (key, value)
     } else {
         // No value, set to empty string
-        env_list.push((line.to_string(), String::new()));
+        (line.to_string(), String::new())
+    };
+
+    // Validate env var name: must start with letter/underscore, contain only alphanumeric/underscore
+    if !is_valid_env_name(&key) {
+        return Err(format!(
+            "Invalid environment variable name: '{}'. Names must start with a letter or underscore and contain only letters, numbers, and underscores.",
+            key
+        ));
     }
+
+    env_list.push((key, value));
+    Ok(())
 }
 
 /// Parse v1 format (PATH!/ENV!) and convert to v2
@@ -327,7 +357,7 @@ fn parse_v1_format(content: &str) -> Result<ParsedPathFile, String> {
         if in_path_section {
             path_entries.push(line.to_string());
         } else if in_env_section {
-            parse_env_line(line, &mut env_vars);
+            parse_env_line(line, &mut env_vars)?;
         }
     }
 
@@ -650,5 +680,43 @@ VAR value
         assert!(parsed.path.replace.is_some());
         let result = apply_path_sections("", &parsed.path).unwrap();
         assert_eq!(result, legacy);
+    }
+
+    #[test]
+    fn test_invalid_env_var_name_number_start() {
+        let content = "!path.replace\n/usr/bin\n\n!env.set\n2INVALID value";
+        let result = parse_path_file(content);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("Invalid environment variable name"));
+        assert!(err.contains("2INVALID"));
+    }
+
+    #[test]
+    fn test_invalid_env_var_name_special_chars() {
+        let content = "!path.replace\n/usr/bin\n\n!env.set\nINVALID-NAME value";
+        let result = parse_path_file(content);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("Invalid environment variable name"));
+    }
+
+    #[test]
+    fn test_invalid_env_var_name_equals() {
+        let content = "!path.replace\n/usr/bin\n\n!env.set\nSPS2_ALLOW_HTTP=1";
+        let result = parse_path_file(content);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("Invalid environment variable name"));
+    }
+
+    #[test]
+    fn test_valid_env_var_names() {
+        let content = "!path.replace\n/usr/bin\n\n!env.set\nVAR1 value\n_VAR2 value\nVAR_3 value";
+        let parsed = parse_path_file(content).unwrap();
+        assert_eq!(parsed.env.set.len(), 3);
+        assert_eq!(parsed.env.set[0].0, "VAR1");
+        assert_eq!(parsed.env.set[1].0, "_VAR2");
+        assert_eq!(parsed.env.set[2].0, "VAR_3");
     }
 }
