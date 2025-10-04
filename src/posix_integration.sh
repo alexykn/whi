@@ -1,4 +1,4 @@
-# whi shell integration for bash/zsh (v0.6.1)
+# whi shell integration for bash/zsh (v0.6.2)
 
 # Absolute path to the whi binary is injected by `whi init`
 __WHI_BIN="__WHI_BIN__"
@@ -65,14 +65,19 @@ __whi_refresh_auto_config() {
     fi
 
     local output
-    output=$(__whi_exec __should_auto_activate 2>/dev/null || printf 'file=0')
-    output=${output%%$'\n'*}
+    output=$(__whi_exec __should_auto_activate 2>/dev/null || printf 'file=0\ndeactivate=0')
 
-    case "$output" in
-        file=1) __WHI_AUTO_FILE=1 ;;
-        file=0) __WHI_AUTO_FILE=0 ;;
-        *) __WHI_AUTO_FILE=0 ;;
-    esac
+    __WHI_AUTO_FILE=0
+    __WHI_AUTO_DEACTIVATE=0
+
+    while IFS= read -r line; do
+        case "$line" in
+            file=1) __WHI_AUTO_FILE=1 ;;
+            file=0) __WHI_AUTO_FILE=0 ;;
+            deactivate=1) __WHI_AUTO_DEACTIVATE=1 ;;
+            deactivate=0) __WHI_AUTO_DEACTIVATE=0 ;;
+        esac
+    done <<< "$output"
 
     if [ -z "$current_mtime" ]; then
         __WHI_AUTO_FILE=0
@@ -744,7 +749,7 @@ __whi_cd_hook() {
         return 0
     fi
 
-    if [ -n "$WHI_VENV_DIR" ] && [ $pwd_changed -eq 1 ]; then
+    if [ -n "$WHI_VENV_DIR" ] && [ "${__WHI_AUTO_DEACTIVATE:-0}" -eq 1 ] && [ $pwd_changed -eq 1 ]; then
         case "${current_pwd%/}/" in
             "${WHI_VENV_DIR%/}/" | "${WHI_VENV_DIR%/}/"*)
                 ;;

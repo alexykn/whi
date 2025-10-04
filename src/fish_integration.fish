@@ -1,4 +1,4 @@
-# whi shell integration for fish (v0.6.1)
+# whi shell integration for fish (v0.6.2)
 
 # Absolute path to the whi binary is injected by `whi init`
 set -gx __WHI_BIN "__WHI_BIN__"
@@ -83,12 +83,20 @@ function __whi_refresh_auto_config
     end
 
     set -l output (__whi_run __should_auto_activate 2>/dev/null)
-    set -l first (string split '\n' -- $output)[1]
+    set -l lines (string split '\n' -- $output)
     set -l auto_flag 0
-    if string match -rq '^file=1' -- $first
-        set auto_flag 1
+    set -l deactivate_flag 0
+
+    for line in $lines
+        if string match -rq '^file=1' -- $line
+            set auto_flag 1
+        else if string match -rq '^deactivate=1' -- $line
+            set deactivate_flag 1
+        end
     end
+
     set -g __WHI_AUTO_FILE $auto_flag
+    set -g __WHI_AUTO_DEACTIVATE $deactivate_flag
 
     if test -z "$current_mtime"
         set -g __WHI_AUTO_FILE 0
@@ -431,7 +439,7 @@ function __whi_cd_hook --on-variable PWD
     test -f "$PWD/whifile"; and set has_file 1
 
     # If already in a venv, check if we left that directory
-    if test -n "$WHI_VENV_DIR"
+    if test -n "$WHI_VENV_DIR" -a "$__WHI_AUTO_DEACTIVATE" -eq 1
         set -l root (string trim --right --chars='/' -- "$WHI_VENV_DIR")
         if not string match -q "$root" -- "$PWD"
             if not string match -q "$root/*" -- "$PWD"

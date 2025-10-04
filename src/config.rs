@@ -46,6 +46,7 @@ pub struct Config {
 #[derive(Debug, Clone, Default)]
 pub struct VenvConfig {
     pub auto_activate_file: bool,
+    pub auto_deactivate_file: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -136,8 +137,9 @@ fn generate_default_config() -> String {
         .join(",\n");
 
     format!(
-        "# whi configuration file\n# This file is automatically created with default values\n\n[venv]\n# Auto-activate whifile when entering directory (default: {auto_file})\nauto_activate_file = {auto_file}\n\n[search]\n# Enable fuzzy search for executables (default: {exec_fuzzy})\n# When enabled: 'whi cargo' finds cargo, cargo-clippy, cargo-fmt, etc.\n# When disabled: 'whi cargo' finds only exact match 'cargo'\nexecutable_search_fuzzy = {exec_fuzzy}\n\n# Enable fuzzy search for variables (default: {var_fuzzy})\n# When enabled: 'whi var cargo' finds CARGO_HOME, CARGO_TARGET_DIR, etc.\n# When disabled: 'whi var cargo' finds only exact match (case-insensitive)\nvariable_search_fuzzy = {var_fuzzy}\n\n[protected]\n# Protected paths are preserved during 'whi apply' even if deleted in session\n# This prevents breaking your shell by accidentally saving a minimal PATH\npaths = [\n{paths}\n]\n",
+        "# whi configuration file\n# This file is automatically created with default values\n\n[venv]\n# Auto-activate whifile when entering directory (default: {auto_file})\nauto_activate_file = {auto_file}\n\n# Auto-deactivate whifile when leaving directory (default: {auto_deactivate_file})\nauto_deactivate_file = {auto_deactivate_file}\n\n[search]\n# Enable fuzzy search for executables (default: {exec_fuzzy})\n# When enabled: 'whi cargo' finds cargo, cargo-clippy, cargo-fmt, etc.\n# When disabled: 'whi cargo' finds only exact match 'cargo'\nexecutable_search_fuzzy = {exec_fuzzy}\n\n# Enable fuzzy search for variables (default: {var_fuzzy})\n# When enabled: 'whi var cargo' finds CARGO_HOME, CARGO_TARGET_DIR, etc.\n# When disabled: 'whi var cargo' finds only exact match (case-insensitive)\nvariable_search_fuzzy = {var_fuzzy}\n\n[protected]\n# Protected paths are preserved during 'whi apply' even if deleted in session\n# This prevents breaking your shell by accidentally saving a minimal PATH\npaths = [\n{paths}\n]\n",
         auto_file = defaults.venv.auto_activate_file,
+        auto_deactivate_file = defaults.venv.auto_deactivate_file,
         exec_fuzzy = defaults.search.executable_search_fuzzy,
         var_fuzzy = defaults.search.variable_search_fuzzy,
         paths = path_entries
@@ -209,6 +211,8 @@ fn parse_config(content: &str) -> Result<Config, String> {
 
             if current_section.as_str() == "venv" && key == "auto_activate_file" {
                 config.venv.auto_activate_file = parse_bool(value)?;
+            } else if current_section.as_str() == "venv" && key == "auto_deactivate_file" {
+                config.venv.auto_deactivate_file = parse_bool(value)?;
             } else if current_section.as_str() == "search" && key == "executable_search_fuzzy" {
                 config.search.executable_search_fuzzy = parse_bool(value)?;
             } else if current_section.as_str() == "search" && key == "variable_search_fuzzy" {
@@ -236,6 +240,7 @@ mod tests {
     fn test_default_config() {
         let config = Config::default();
         assert!(!config.venv.auto_activate_file);
+        assert!(!config.venv.auto_deactivate_file);
         assert_eq!(config.protected.paths, default_protected_paths());
     }
 
@@ -244,6 +249,7 @@ mod tests {
         let toml = r#"
 [venv]
 auto_activate_file = true
+auto_deactivate_file = true
 
 [protected]
 paths = [
@@ -254,6 +260,7 @@ paths = [
 
         let config = parse_config(toml).unwrap();
         assert!(config.venv.auto_activate_file);
+        assert!(config.venv.auto_deactivate_file);
         assert_eq!(config.protected.paths.len(), 2);
         assert_eq!(config.protected.paths[0], PathBuf::from("/bin"));
     }
@@ -263,6 +270,7 @@ paths = [
         let default_toml = generate_default_config();
         let config = parse_config(&default_toml).unwrap();
         assert!(!config.venv.auto_activate_file);
+        assert!(!config.venv.auto_deactivate_file);
         assert_eq!(config.protected.paths, default_protected_paths());
     }
 }

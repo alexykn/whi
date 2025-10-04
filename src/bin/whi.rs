@@ -782,11 +782,14 @@ fn run_should_auto_activate() -> i32 {
 
     if let Ok(config) = load_config() {
         let file_val = i32::from(config.venv.auto_activate_file);
+        let deactivate_val = i32::from(config.venv.auto_deactivate_file);
         println!("file={file_val}");
+        println!("deactivate={deactivate_val}");
         0
     } else {
         // Default to false on error
         println!("file=0");
+        println!("deactivate=0");
         0
     }
 }

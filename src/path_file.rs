@@ -326,9 +326,9 @@ fn parse_env_line(line: &str, env_list: &mut Vec<(String, String)>) -> Result<()
                 String::new()
             }
         } else if key.contains('-') {
-            format!(". Hyphens are not allowed, use underscores instead")
-        } else if key.chars().next().map_or(false, |c| c.is_ascii_digit()) {
-            format!(". Variable names cannot start with a number")
+            ". Hyphens are not allowed, use underscores instead".to_string()
+        } else if key.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+            ". Variable names cannot start with a number".to_string()
         } else {
             String::new()
         };
