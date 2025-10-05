@@ -961,7 +961,6 @@ fn handle_delete<W: Write>(
 
 #[allow(clippy::too_many_lines)]
 fn handle_apply(shell_opt: Option<&String>, no_protect: bool, force: bool) -> i32 {
-    use crate::config::load_config;
     use crate::config_manager::save_path;
     use crate::session_tracker::cleanup_old_sessions;
     use crate::shell_detect::{detect_current_shell, Shell};
@@ -977,7 +976,7 @@ fn handle_apply(shell_opt: Option<&String>, no_protect: bool, force: bool) -> i3
     // Apply protected paths unless --no-protect is set
     // Protection is silent - just ensures configured paths are present
     if !no_protect {
-        if let Ok(config) = load_config() {
+        if let Ok(protected_path_bufs) = crate::protected_config::load_protected_paths() {
             // Normalize paths by removing trailing slashes for comparison
             let current_paths: HashSet<String> = path_var
                 .split(':')
@@ -985,9 +984,7 @@ fn handle_apply(shell_opt: Option<&String>, no_protect: bool, force: bool) -> i3
                 .map(|s| s.trim_end_matches('/').to_string())
                 .collect();
 
-            let protected_paths: Vec<String> = config
-                .protected
-                .paths
+            let protected_paths: Vec<String> = protected_path_bufs
                 .iter()
                 .filter_map(|p| {
                     let path_str = p.to_string_lossy().to_string();
@@ -1434,7 +1431,7 @@ mod tests {
     fn test_protected_path_normalization() {
         // Test that paths with/without trailing slashes are treated as equal
         let current = "/usr/local/sbin/:/usr/bin:/bin";
-        let protected = vec![PathBuf::from("/usr/local/sbin")];
+        let protected = [PathBuf::from("/usr/local/sbin")];
 
         let current_paths: HashSet<String> = current
             .split(':')
@@ -1467,7 +1464,7 @@ mod tests {
     fn test_protected_path_missing() {
         // Test that missing protected paths are detected
         let current = "/usr/bin:/bin";
-        let protected = vec![PathBuf::from("/usr/local/sbin")];
+        let protected = [PathBuf::from("/usr/local/sbin")];
 
         let current_paths: HashSet<String> = current
             .split(':')
@@ -1496,7 +1493,7 @@ mod tests {
     fn test_protected_path_already_present() {
         // Test that existing protected paths are not duplicated
         let current = "/usr/local/sbin:/usr/bin:/bin";
-        let protected = vec![PathBuf::from("/usr/local/sbin")];
+        let protected = [PathBuf::from("/usr/local/sbin")];
 
         let current_paths: HashSet<String> = current
             .split(':')

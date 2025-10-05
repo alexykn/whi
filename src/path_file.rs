@@ -7,8 +7,37 @@
 /// /bin
 ///
 /// !env.set
-/// `VAR` value
+/// VAR value
 /// ```
+///
+/// # Environment Variable Operations (Order-Dependent)
+///
+/// Environment operations (`!env.replace`, `!env.set`, `!env.unset`) are executed
+/// **in the order they appear** in the whifile. This allows flexible patterns:
+///
+/// **Pattern 1: Replace then override**
+/// ```text
+/// !env.replace
+/// MIN_VAR minimal_value
+///
+/// !env.set
+/// EXTRA_VAR additional_value
+/// ```
+/// This first replaces the entire environment (unsetting all non-protected vars),
+/// then sets `EXTRA_VAR` on top of the minimal environment.
+///
+/// **Pattern 2: Set then unset**
+/// ```text
+/// !env.set
+/// DEBUG 1
+///
+/// !env.unset
+/// PRODUCTION_KEY
+/// ```
+/// Sets `DEBUG`, then explicitly unsets `PRODUCTION_KEY`.
+///
+/// **Important:** `!env.replace` only protects variables listed in `~/.whi/protected_vars`.
+/// To unset a protected variable, use explicit `!env.unset` (use with caution!).
 ///
 /// Legacy format (pre-0.6.0):
 /// ```text
@@ -17,7 +46,7 @@
 /// /bin
 ///
 /// ENV!
-/// `VAR` value
+/// VAR value
 /// ```
 /// `PATH` section configuration for whifile
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -30,15 +59,23 @@ pub struct PathSections {
     pub append: Vec<String>,
 }
 
+/// Individual environment variable operation
+#[derive(Debug, Clone, PartialEq)]
+pub enum EnvOperation {
+    /// Replace entire environment (unsets all non-protected vars, then sets these)
+    Replace(Vec<(String, String)>),
+    /// Set a single environment variable
+    Set(String, String),
+    /// Unset a single environment variable
+    Unset(String),
+}
+
 /// `ENV` section configuration for whifile
+/// Operations are executed in the order they appear in the file
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct EnvSections {
-    /// Replace entire environment (mutually exclusive with set/unset)
-    pub replace: Option<Vec<(String, String)>>,
-    /// Set these environment variables
-    pub set: Vec<(String, String)>,
-    /// Unset these environment variables (names only)
-    pub unset: Vec<String>,
+    /// Ordered list of environment operations
+    pub operations: Vec<EnvOperation>,
 }
 
 /// Parsed path file containing both `PATH` and `ENV` vars
@@ -110,28 +147,42 @@ pub fn default_whifile_template(protected_paths: &[String]) -> String {
     output.push_str("# !path.append\n");
     output.push_str("# /another/path\n\n");
 
-    // ENV section header with exclusivity rules
-    output.push_str("# ENV directives:\n");
+    // ENV section header with order-dependent behavior
+    output.push_str("# ENV directives (IMPORTANT: executed in the order they appear!):\n");
+    output.push_str("#\n");
+    output.push_str("# Operations are processed sequentially, allowing powerful patterns:\n");
+    output.push_str("# 1. !env.replace -> !env.set   (minimal env + extras)\n");
+    output.push_str("# 2. !env.set -> !env.unset     (set then selectively remove)\n");
+    output.push_str("# 3. Multiple sections of same type work as expected\n");
     output.push_str("#\n");
     output.push_str("# !env.set - Set environment variables\n");
-    output.push_str("#   (can be combined with !env.unset)\n");
     output.push_str("#\n");
     output.push_str("!env.set\n");
     output.push_str("# KEY value\n\n");
 
     output.push_str("# !env.unset - Unset environment variables\n");
-    output.push_str("#   (can be combined with !env.set)\n");
+    output.push_str("#   Works on any variable, including those set above\n");
     output.push_str("#\n");
     output.push_str("# !env.unset\n");
     output.push_str("# VAR_TO_REMOVE\n\n");
 
     output.push_str("# !env.replace - Replace entire environment\n");
-    output.push_str("#   (exclusive: cannot be used with !env.set or !env.unset)\n");
-    output.push_str("#   WARNING: Unsets all non-protected env vars not listed below\n");
+    output.push_str("#   Unsets ALL non-protected vars, then sets only the ones listed below\n");
+    output.push_str("#   Protected vars (see ~/.whi/protected_vars) are NEVER unset by replace\n");
+    output.push_str(
+        "#   To unset protected vars, use explicit !env.unset AFTER replace (careful!)\n",
+    );
     output.push_str("#\n");
     output.push_str("# !env.replace\n");
     output.push_str("# KEY value\n");
-    output.push_str("# KEY2 value2\n");
+    output.push_str("# KEY2 value2\n\n");
+
+    output.push_str("# Common pattern: Minimal environment + selective additions\n");
+    output.push_str("# !env.replace\n");
+    output.push_str("# MINIMAL_VAR value    # Start with minimal env\n");
+    output.push_str("#\n");
+    output.push_str("# !env.set             # Then add extras (executed AFTER replace)\n");
+    output.push_str("# EXTRA_VAR additional_value\n");
 
     output
 }
@@ -166,54 +217,122 @@ pub fn parse_path_file(content: &str) -> Result<ParsedPathFile, String> {
     }
 }
 
-/// Parse v2 format with !path.* and !env.* directives
+/// Process PATH section line
+fn process_path_line(section: &str, line: &str, path_sections: &mut PathSections) {
+    match section {
+        "replace" => {
+            path_sections
+                .replace
+                .get_or_insert_with(Vec::new)
+                .push(line.to_string());
+        }
+        "prepend" => {
+            path_sections.prepend.push(line.to_string());
+        }
+        "append" => {
+            path_sections.append.push(line.to_string());
+        }
+        _ => {}
+    }
+}
+
+/// Process ENV section line
+fn process_env_line(
+    section: &str,
+    line: &str,
+    env_sections: &mut EnvSections,
+    env_replace_buffer: &mut Vec<(String, String)>,
+) -> Result<(), String> {
+    match section {
+        "replace" => {
+            parse_env_line(line, env_replace_buffer)?;
+        }
+        "set" => {
+            let mut temp = Vec::new();
+            parse_env_line(line, &mut temp)?;
+            for (key, value) in temp {
+                env_sections.operations.push(EnvOperation::Set(key, value));
+            }
+        }
+        "unset" => {
+            env_sections
+                .operations
+                .push(EnvOperation::Unset(line.to_string()));
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 fn parse_v2_format(content: &str) -> Result<ParsedPathFile, String> {
+    use crate::file_utils::strip_inline_comment;
+
     let mut path_sections = PathSections::default();
     let mut env_sections = EnvSections::default();
 
     let mut current_path_section: Option<&str> = None;
     let mut current_env_section: Option<&str> = None;
+    let mut env_replace_buffer: Vec<(String, String)> = Vec::new();
+
+    let flush_replace = |env_sections: &mut EnvSections,
+                         env_replace_buffer: &mut Vec<(String, String)>| {
+        if !env_replace_buffer.is_empty() {
+            env_sections
+                .operations
+                .push(EnvOperation::Replace(env_replace_buffer.clone()));
+            env_replace_buffer.clear();
+        }
+    };
 
     for line in content.lines() {
         let line = line.trim();
 
-        // Skip empty lines and comments
         if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        // Strip inline comments
+        let line = strip_inline_comment(line);
+
+        // Skip if line becomes empty after stripping comment
+        if line.is_empty() {
             continue;
         }
 
         // Check for section headers
         match line {
             "!path.replace" | "!path.saved" => {
+                flush_replace(&mut env_sections, &mut env_replace_buffer);
                 current_path_section = Some("replace");
                 current_env_section = None;
                 continue;
             }
             "!path.prepend" => {
+                flush_replace(&mut env_sections, &mut env_replace_buffer);
                 current_path_section = Some("prepend");
                 current_env_section = None;
                 continue;
             }
             "!path.append" => {
+                flush_replace(&mut env_sections, &mut env_replace_buffer);
                 current_path_section = Some("append");
                 current_env_section = None;
                 continue;
             }
             "!env.replace" => {
+                flush_replace(&mut env_sections, &mut env_replace_buffer);
                 current_path_section = None;
                 current_env_section = Some("replace");
                 continue;
             }
             "!env.set" | "!env.saved" => {
-                // NOTE: !env.saved is currently treated as !env.set (not yet fully implemented)
-                // When implementing env var saving/restoration (like PATH saving), ensure it:
-                // 1. Respects protected_env_vars() guard in venv_manager.rs
-                // 2. Never saves/restores WHI_SHELL_INITIALIZED, WHI_SESSION_PID, __WHI_BIN, etc.
+                flush_replace(&mut env_sections, &mut env_replace_buffer);
                 current_path_section = None;
                 current_env_section = Some("set");
                 continue;
             }
             "!env.unset" => {
+                flush_replace(&mut env_sections, &mut env_replace_buffer);
                 current_path_section = None;
                 current_env_section = Some("unset");
                 continue;
@@ -223,52 +342,20 @@ fn parse_v2_format(content: &str) -> Result<ParsedPathFile, String> {
 
         // Process content based on current section
         if let Some(section) = current_path_section {
-            match section {
-                "replace" => {
-                    path_sections
-                        .replace
-                        .get_or_insert_with(Vec::new)
-                        .push(line.to_string());
-                }
-                "prepend" => {
-                    path_sections.prepend.push(line.to_string());
-                }
-                "append" => {
-                    path_sections.append.push(line.to_string());
-                }
-                _ => {}
-            }
+            process_path_line(section, line, &mut path_sections);
         } else if let Some(section) = current_env_section {
-            match section {
-                "replace" => {
-                    let env_list = env_sections.replace.get_or_insert_with(Vec::new);
-                    parse_env_line(line, env_list)?;
-                }
-                "set" => {
-                    parse_env_line(line, &mut env_sections.set)?;
-                }
-                "unset" => {
-                    env_sections.unset.push(line.to_string());
-                }
-                _ => {}
-            }
+            process_env_line(section, line, &mut env_sections, &mut env_replace_buffer)?;
         }
     }
 
-    // Validate mutual exclusivity
+    flush_replace(&mut env_sections, &mut env_replace_buffer);
+
     if path_sections.replace.is_some()
         && (!path_sections.prepend.is_empty() || !path_sections.append.is_empty())
     {
         return Err("Cannot combine !path.replace with !path.prepend or !path.append".to_string());
     }
 
-    if env_sections.replace.is_some()
-        && (!env_sections.set.is_empty() || !env_sections.unset.is_empty())
-    {
-        return Err("Cannot combine !env.replace with !env.set or !env.unset".to_string());
-    }
-
-    // Must have at least one PATH entry
     if path_sections.replace.is_none()
         && path_sections.prepend.is_empty()
         && path_sections.append.is_empty()
@@ -304,7 +391,7 @@ fn is_valid_env_name(name: &str) -> bool {
 }
 
 /// Parse `ENV` var line: `KEY` value (space-separated, fish-style)
-/// Returns error if KEY contains invalid characters
+/// Returns error if `KEY` contains invalid characters
 fn parse_env_line(line: &str, env_list: &mut Vec<(String, String)>) -> Result<(), String> {
     let (key, value) = if let Some(space_idx) = line.find(char::is_whitespace) {
         let key = line[..space_idx].to_string();
@@ -342,8 +429,9 @@ fn parse_env_line(line: &str, env_list: &mut Vec<(String, String)>) -> Result<()
     Ok(())
 }
 
-/// Parse v1 format (PATH!/ENV!) and convert to v2
 fn parse_v1_format(content: &str) -> Result<ParsedPathFile, String> {
+    use crate::file_utils::strip_inline_comment;
+
     let mut path_entries = Vec::new();
     let mut env_vars = Vec::new();
     let mut in_path_section = false;
@@ -354,6 +442,14 @@ fn parse_v1_format(content: &str) -> Result<ParsedPathFile, String> {
 
         // Skip empty lines and comments
         if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        // Strip inline comments
+        let line = strip_inline_comment(line);
+
+        // Skip if line becomes empty after stripping comment
+        if line.is_empty() {
             continue;
         }
 
@@ -380,18 +476,19 @@ fn parse_v1_format(content: &str) -> Result<ParsedPathFile, String> {
         return Err("No PATH entries found in file".to_string());
     }
 
-    // Convert to v2 format: PATH! becomes !path.replace, ENV! becomes !env.set
+    // Convert to v2 format: PATH! becomes !path.replace, ENV! becomes !env.set operations
+    let mut operations = Vec::new();
+    for (key, value) in env_vars {
+        operations.push(EnvOperation::Set(key, value));
+    }
+
     Ok(ParsedPathFile {
         path: PathSections {
             replace: Some(path_entries),
             prepend: Vec::new(),
             append: Vec::new(),
         },
-        env: EnvSections {
-            replace: None,
-            set: env_vars,
-            unset: Vec::new(),
-        },
+        env: EnvSections { operations },
     })
 }
 
@@ -497,7 +594,7 @@ ENV!
             parsed.path.replace.as_ref().unwrap().join(":"),
             "/usr/bin:/bin:/usr/local/bin"
         );
-        assert!(parsed.env.set.is_empty());
+        assert!(parsed.env.operations.is_empty());
     }
 
     #[test]
@@ -507,7 +604,7 @@ ENV!
         let parsed = parse_path_file(&formatted).unwrap();
         let reconstructed = apply_path_sections("", &parsed.path).unwrap();
         assert_eq!(reconstructed, original);
-        assert!(parsed.env.set.is_empty());
+        assert!(parsed.env.operations.is_empty());
     }
 
     #[test]
@@ -552,7 +649,7 @@ ENV!
         let parsed = parse_path_file(content).unwrap();
         let result = apply_path_sections("", &parsed.path).unwrap();
         assert_eq!(result, "/usr/bin:/bin:/usr/local/bin");
-        assert!(parsed.env.set.is_empty());
+        assert!(parsed.env.operations.is_empty());
     }
 
     #[test]
@@ -614,8 +711,15 @@ VAR2 value2
 OLD_VAR
 "#;
         let parsed = parse_path_file(content).unwrap();
-        assert_eq!(parsed.env.set.len(), 2);
-        assert_eq!(parsed.env.unset, vec!["OLD_VAR"]);
+        // Should have 2 Set operations and 1 Unset operation
+        assert_eq!(parsed.env.operations.len(), 3);
+        assert!(
+            matches!(&parsed.env.operations[0], EnvOperation::Set(k, v) if k == "VAR1" && v == "value1")
+        );
+        assert!(
+            matches!(&parsed.env.operations[1], EnvOperation::Set(k, v) if k == "VAR2" && v == "value2")
+        );
+        assert!(matches!(&parsed.env.operations[2], EnvOperation::Unset(k) if k == "OLD_VAR"));
     }
 
     #[test]
@@ -682,9 +786,11 @@ VAR value
             parsed.path.replace.as_ref().unwrap().join(":"),
             "/usr/bin:/bin"
         );
-        // v1 ENV! should convert to !env.set
-        assert_eq!(parsed.env.set.len(), 1);
-        assert_eq!(parsed.env.set[0], ("VAR".to_string(), "value".to_string()));
+        // v1 ENV! should convert to !env.set operations
+        assert_eq!(parsed.env.operations.len(), 1);
+        assert!(
+            matches!(&parsed.env.operations[0], EnvOperation::Set(k, v) if k == "VAR" && v == "value")
+        );
     }
 
     #[test]
@@ -732,9 +838,75 @@ VAR value
     fn test_valid_env_var_names() {
         let content = "!path.replace\n/usr/bin\n\n!env.set\nVAR1 value\n_VAR2 value\nVAR_3 value";
         let parsed = parse_path_file(content).unwrap();
-        assert_eq!(parsed.env.set.len(), 3);
-        assert_eq!(parsed.env.set[0].0, "VAR1");
-        assert_eq!(parsed.env.set[1].0, "_VAR2");
-        assert_eq!(parsed.env.set[2].0, "VAR_3");
+        assert_eq!(parsed.env.operations.len(), 3);
+        assert!(matches!(&parsed.env.operations[0], EnvOperation::Set(k, _) if k == "VAR1"));
+        assert!(matches!(&parsed.env.operations[1], EnvOperation::Set(k, _) if k == "_VAR2"));
+        assert!(matches!(&parsed.env.operations[2], EnvOperation::Set(k, _) if k == "VAR_3"));
+    }
+
+    #[test]
+    fn test_inline_comments_in_whifiles() {
+        let content = r"# PATH directives
+!path.replace
+/usr/local/bin
+/usr/bin
+/bin
+/usr/sbin     # inline comment
+/sbin # inline comment
+/Users/$USER/.cargo/bin
+
+!env.set
+TEST_VAR1 $(pwd)     # command substitution with comment
+TEST_VAR2 $HOME # variable with comment
+TEST_VAR3 TEST#comment without space
+";
+
+        let parsed = parse_path_file(content).unwrap();
+
+        // Verify paths parsed correctly (inline comments stripped)
+        let paths = parsed.path.replace.as_ref().unwrap();
+        assert_eq!(paths.len(), 6);
+        assert_eq!(paths[0], "/usr/local/bin");
+        assert_eq!(paths[1], "/usr/bin");
+        assert_eq!(paths[2], "/bin");
+        assert_eq!(paths[3], "/usr/sbin");
+        assert_eq!(paths[4], "/sbin");
+        assert_eq!(paths[5], "/Users/$USER/.cargo/bin");
+
+        // Verify env vars parsed correctly
+        assert_eq!(parsed.env.operations.len(), 3);
+        assert!(
+            matches!(&parsed.env.operations[0], EnvOperation::Set(k, v) if k == "TEST_VAR1" && v == "$(pwd)")
+        );
+        assert!(
+            matches!(&parsed.env.operations[1], EnvOperation::Set(k, v) if k == "TEST_VAR2" && v == "$HOME")
+        );
+        assert!(
+            matches!(&parsed.env.operations[2], EnvOperation::Set(k, v) if k == "TEST_VAR3" && v == "TEST")
+        );
+    }
+
+    #[test]
+    fn test_inline_comments_v1_format() {
+        // Test that inline comments work with legacy v1 format too
+        let content = r"PATH!
+/usr/bin     # system binaries
+/bin # more binaries
+
+ENV!
+MY_VAR value # some value
+";
+
+        let parsed = parse_path_file(content).unwrap();
+
+        let paths = parsed.path.replace.as_ref().unwrap();
+        assert_eq!(paths.len(), 2);
+        assert_eq!(paths[0], "/usr/bin");
+        assert_eq!(paths[1], "/bin");
+
+        assert_eq!(parsed.env.operations.len(), 1);
+        assert!(
+            matches!(&parsed.env.operations[0], EnvOperation::Set(k, v) if k == "MY_VAR" && v == "value")
+        );
     }
 }

@@ -217,8 +217,19 @@ pub fn load_profile(profile_name: &str) -> Result<crate::path_file::ParsedPathFi
             String::new()
         };
 
+        // Extract set operations from env operations
+        let env_vars: Vec<(String, String)> = parsed
+            .env
+            .operations
+            .iter()
+            .filter_map(|op| match op {
+                crate::path_file::EnvOperation::Set(k, v) => Some((k.clone(), v.clone())),
+                _ => None,
+            })
+            .collect();
+
         // Format with new directives
-        let new_content = format_path_file_with_env(&path_str, &parsed.env.set);
+        let new_content = format_path_file_with_env(&path_str, &env_vars);
 
         // Write atomically
         let mut atomic_file = AtomicFile::new(&profile_file)

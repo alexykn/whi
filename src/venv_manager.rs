@@ -12,11 +12,19 @@ use crate::path_guard::PathGuard;
 
 const WHI_FILE: &str = "whifile";
 
+/// Represents a single environment variable change operation
+#[derive(Debug, Clone)]
+pub enum EnvChange {
+    /// Set a variable to a value
+    Set(String, String),
+    /// Unset a variable
+    Unset(String),
+}
+
 #[derive(Debug, Clone)]
 pub struct VenvTransition {
     pub new_path: String,
-    pub set_vars: Vec<(String, String)>,
-    pub unset_vars: Vec<String>,
+    pub env_changes: Vec<EnvChange>,
 }
 
 /// Returns the list of protected environment variables that should never be unset
@@ -26,55 +34,91 @@ pub struct VenvTransition {
 ///
 /// IMPORTANT: When implementing !env.saved functionality (saving/restoring env vars),
 /// ensure it also uses this guard to avoid saving/restoring protected variables.
-fn protected_env_vars() -> &'static [&'static str] {
-    &[
-        // System critical - universal
-        "PATH",
-        "HOME",
-        "USER",
-        "LOGNAME",
-        "SHELL",
-        "TERM",   // Terminal type - absolutely critical
-        "LANG",   // Locale - affects program behavior
-        "LC_ALL", // Locale overrides
-        "LC_CTYPE",
-        "LC_MESSAGES",
-        "LC_NUMERIC",
-        "LC_COLLATE",
-        "LC_TIME",
-        "IFS", // Internal field separator - DANGEROUS to unset
-        // Shell state
-        "PWD",    // Current directory
-        "OLDPWD", // Previous directory
-        "SHLVL",  // Shell nesting level
-        // Temp directories
-        "TMPDIR", // macOS/BSD standard temp dir
-        "TMP",    // Alternative temp dir
-        "TEMP",   // Windows-style temp dir
-        // Display/GUI (X11/Wayland)
-        "DISPLAY",                  // X11 display
-        "WAYLAND_DISPLAY",          // Wayland display
-        "XDG_RUNTIME_DIR",          // XDG runtime directory
-        "XDG_SESSION_TYPE",         // Session type (x11/wayland)
-        "XAUTHORITY",               // X11 auth cookie
-        "DBUS_SESSION_BUS_ADDRESS", // DBus session bus
-        // SSH
-        "SSH_AUTH_SOCK",  // SSH agent socket - commonly needed
-        "SSH_AGENT_PID",  // SSH agent PID
-        "SSH_CONNECTION", // SSH connection info
-        "SSH_CLIENT",     // SSH client info
-        "SSH_TTY",        // SSH TTY
-        // macOS specific
-        "__CF_USER_TEXT_ENCODING", // Core Foundation text encoding
-        "__CFBundleIdentifier",    // App bundle identifier
-        // Whi shell integration critical
-        "WHI_SHELL_INITIALIZED",
-        "WHI_SESSION_PID",
-        "__WHI_BIN",
-        // Whi venv state (protected when in venv)
-        "WHI_VENV_NAME",
-        "WHI_VENV_DIR",
-    ]
+///
+/// Loads from `~/.whi/protected_vars` file, falls back to hardcoded defaults if load fails.
+fn protected_env_vars() -> Vec<String> {
+    use crate::protected_config::load_protected_vars;
+
+    // Load from file, fall back to hardcoded defaults if it fails
+    load_protected_vars().unwrap_or_else(|e| {
+        // Warn about fallback in non-test environments
+        #[cfg(not(test))]
+        {
+            eprintln!("Warning: Failed to load protected environment variables: {e}");
+            eprintln!("Using hardcoded defaults. Custom protected vars may not be active.");
+        }
+
+        #[cfg(test)]
+        let _ = e; // Suppress unused warning in tests
+
+        // Fallback to hardcoded defaults
+        vec![
+            // System critical - universal
+            "PATH".to_string(),
+            "HOME".to_string(),
+            "USER".to_string(),
+            "LOGNAME".to_string(),
+            "SHELL".to_string(),
+            "TERM".to_string(),
+            "TERMINFO".to_string(),
+            "TERM_PROGRAM".to_string(),
+            "TERM_PROGRAM_VERSION".to_string(),
+            "LANG".to_string(),
+            "LC_ALL".to_string(),
+            "LC_CTYPE".to_string(),
+            "LC_MESSAGES".to_string(),
+            "LC_NUMERIC".to_string(),
+            "LC_COLLATE".to_string(),
+            "LC_TIME".to_string(),
+            "IFS".to_string(),
+            // Shell state
+            "PWD".to_string(),
+            "OLDPWD".to_string(),
+            "SHLVL".to_string(),
+            // Temp directories
+            "TMPDIR".to_string(),
+            "TMP".to_string(),
+            "TEMP".to_string(),
+            // Display/GUI
+            "DISPLAY".to_string(),
+            "WAYLAND_DISPLAY".to_string(),
+            "XDG_RUNTIME_DIR".to_string(),
+            "XDG_SESSION_TYPE".to_string(),
+            "XDG_DATA_DIRS".to_string(),
+            "XAUTHORITY".to_string(),
+            "DBUS_SESSION_BUS_ADDRESS".to_string(),
+            // SSH
+            "SSH_AUTH_SOCK".to_string(),
+            "SSH_AGENT_PID".to_string(),
+            "SSH_CONNECTION".to_string(),
+            "SSH_CLIENT".to_string(),
+            "SSH_TTY".to_string(),
+            // macOS specific
+            "__CF_USER_TEXT_ENCODING".to_string(),
+            "__CFBundleIdentifier".to_string(),
+            "XPC_FLAGS".to_string(),
+            "XPC_SERVICE_NAME".to_string(),
+            // Homebrew
+            "HOMEBREW_PREFIX".to_string(),
+            "HOMEBREW_CELLAR".to_string(),
+            "HOMEBREW_REPOSITORY".to_string(),
+            // Terminal emulators
+            "GHOSTTY_BIN_DIR".to_string(),
+            "GHOSTTY_RESOURCES_DIR".to_string(),
+            "GHOSTTY_SHELL_FEATURES".to_string(),
+            "COLORTERM".to_string(),
+            "COMMAND_MODE".to_string(),
+            // Manual pages
+            "MANPATH".to_string(),
+            // Whi shell integration critical
+            "WHI_SHELL_INITIALIZED".to_string(),
+            "WHI_SESSION_PID".to_string(),
+            "__WHI_BIN".to_string(),
+            // Whi venv state
+            "WHI_VENV_NAME".to_string(),
+            "WHI_VENV_DIR".to_string(),
+        ]
+    })
 }
 
 /// Check if we're in a venv
@@ -320,8 +364,8 @@ pub fn expand_shell_vars(value: &str) -> String {
 
 /// Create whifile from current `PATH`
 pub fn create_file(force: bool) -> io::Result<()> {
-    use crate::config::load_config;
     use crate::path_file::default_whifile_template;
+    use crate::protected_config::load_protected_paths;
 
     let whi_file = Path::new(WHI_FILE);
 
@@ -333,11 +377,9 @@ pub fn create_file(force: bool) -> io::Result<()> {
         ));
     }
 
-    // Load config to get protected paths
-    let config = load_config().unwrap_or_default();
-    let protected_paths: Vec<String> = config
-        .protected
-        .paths
+    // Load protected paths from file (creates default file if doesn't exist)
+    let protected_paths: Vec<String> = load_protected_paths()
+        .unwrap_or_default()
         .iter()
         .map(|p| p.to_string_lossy().to_string())
         .collect();
@@ -358,10 +400,84 @@ pub fn create_file(force: bool) -> io::Result<()> {
 }
 
 /// Source venv from specific path (used by shell integration)
+/// Auto-upgrade whifile from old format to new format
+fn auto_upgrade_whifile(
+    path_file: &Path,
+    parsed: &crate::path_file::ParsedPathFile,
+) -> io::Result<()> {
+    use crate::atomic_file::AtomicFile;
+    use crate::path_file::format_path_file_with_env;
+
+    let path_str = if let Some(ref replace) = parsed.path.replace {
+        replace.join(":")
+    } else {
+        String::new()
+    };
+
+    let env_vars: Vec<(String, String)> = parsed
+        .env
+        .operations
+        .iter()
+        .filter_map(|op| match op {
+            crate::path_file::EnvOperation::Set(k, v) => Some((k.clone(), v.clone())),
+            _ => None,
+        })
+        .collect();
+
+    let new_content = format_path_file_with_env(&path_str, &env_vars);
+    let mut atomic_file = AtomicFile::new(path_file)?;
+    atomic_file.write_all(new_content.as_bytes())?;
+    atomic_file.commit()?;
+    Ok(())
+}
+
+fn process_env_operations(operations: &[crate::path_file::EnvOperation]) -> Vec<EnvChange> {
+    use crate::path_file::EnvOperation;
+    use std::collections::HashMap;
+
+    let mut changes = Vec::new();
+    // Track simulated environment state (starts with current process env)
+    let mut simulated_env: HashMap<String, String> = env::vars().collect();
+    let protected = protected_env_vars();
+
+    for operation in operations {
+        match operation {
+            EnvOperation::Replace(replace_vars) => {
+                // Unset all non-protected vars that aren't in the replace list
+                for key in simulated_env.keys() {
+                    if !protected.contains(key) && !replace_vars.iter().any(|(k, _)| k == key) {
+                        changes.push(EnvChange::Unset(key.clone()));
+                    }
+                }
+
+                // Clear simulated env of non-protected vars
+                simulated_env.retain(|k, _| protected.contains(k));
+
+                // Set all replace vars
+                for (key, value) in replace_vars {
+                    let expanded_value = expand_shell_vars(value);
+                    changes.push(EnvChange::Set(key.clone(), expanded_value.clone()));
+                    simulated_env.insert(key.clone(), expanded_value);
+                }
+            }
+            EnvOperation::Set(key, value) => {
+                let expanded_value = expand_shell_vars(value);
+                changes.push(EnvChange::Set(key.clone(), expanded_value.clone()));
+                simulated_env.insert(key.clone(), expanded_value);
+            }
+            EnvOperation::Unset(key) => {
+                changes.push(EnvChange::Unset(key.clone()));
+                simulated_env.remove(key);
+            }
+        }
+    }
+
+    changes
+}
+
 pub fn source_from_path(dir_path: &str) -> io::Result<VenvTransition> {
     use crate::path_file::{apply_path_sections, parse_path_file};
 
-    // Check if already in venv
     if is_in_venv() {
         return Err(io::Error::new(
             io::ErrorKind::AlreadyExists,
@@ -378,10 +494,8 @@ pub fn source_from_path(dir_path: &str) -> io::Result<VenvTransition> {
         return Err(io::Error::new(io::ErrorKind::NotFound, "No whifile found"));
     };
 
-    // Read and parse PATH and ENV vars from file
     let file_content = fs::read_to_string(&path_file)?;
 
-    // Auto-upgrade old format (PATH!/ENV!) to new format (!path.replace/!env.set)
     let needs_upgrade = file_content
         .lines()
         .find(|line| {
@@ -397,25 +511,8 @@ pub fn source_from_path(dir_path: &str) -> io::Result<VenvTransition> {
         )
     })?;
 
-    // If old format detected, convert and write back
     if needs_upgrade {
-        use crate::atomic_file::AtomicFile;
-        use crate::path_file::format_path_file_with_env;
-
-        // Reconstruct PATH string from parsed data for formatting
-        let path_str = if let Some(ref replace) = parsed.path.replace {
-            replace.join(":")
-        } else {
-            String::new()
-        };
-
-        // Format with new directives
-        let new_content = format_path_file_with_env(&path_str, &parsed.env.set);
-
-        // Write atomically
-        let mut atomic_file = AtomicFile::new(&path_file)?;
-        atomic_file.write_all(new_content.as_bytes())?;
-        atomic_file.commit()?;
+        auto_upgrade_whifile(&path_file, &parsed)?;
     }
 
     // Get current session PATH BEFORE activation (used as base for prepend/append and for restore)
@@ -446,50 +543,30 @@ pub fn source_from_path(dir_path: &str) -> io::Result<VenvTransition> {
     save_venv_restore(session_pid, &current_path)?;
     save_venv_info(session_pid, dir)?;
 
-    // Handle environment variables
-    let mut set_vars = vec![
-        ("WHI_VENV_NAME".to_string(), venv_name),
-        ("WHI_VENV_DIR".to_string(), dir.display().to_string()),
+    // Handle environment variables - preserve operation order
+    let mut env_changes = vec![
+        EnvChange::Set("WHI_VENV_NAME".to_string(), venv_name),
+        EnvChange::Set("WHI_VENV_DIR".to_string(), dir.display().to_string()),
     ];
 
-    let mut unset_vars = Vec::new();
+    // Process user-defined env operations (preserves order and tracks state)
+    let user_env_changes = process_env_operations(&parsed.env.operations);
 
-    // Handle env.replace (mutually exclusive with set/unset)
-    if let Some(replace_vars) = parsed.env.replace {
-        // Collect all current env var names to unset (except protected ones)
-        let protected = protected_env_vars();
-        for (key, _) in env::vars() {
-            if !protected.contains(&key.as_str()) && !replace_vars.iter().any(|(k, _)| k == &key) {
-                unset_vars.push(key);
-            }
-        }
-        // Set replacement vars (with expansion)
-        for (key, value) in replace_vars {
-            let expanded_value = expand_shell_vars(&value);
-            set_vars.push((key, expanded_value));
-        }
-    } else {
-        // Handle env.set and env.unset
-        for (key, value) in parsed.env.set {
-            let expanded_value = expand_shell_vars(&value);
-            set_vars.push((key, expanded_value));
-        }
-        // Filter protected vars from unset list
-        let protected = protected_env_vars();
-        unset_vars.extend(
-            parsed
-                .env
-                .unset
-                .into_iter()
-                .filter(|var| !protected.contains(&var.as_str())),
-        );
-    }
+    // Extract keys of SET operations for saving (so we know what to unset on exit)
+    let env_keys: Vec<String> = user_env_changes
+        .iter()
+        .filter_map(|change| match change {
+            EnvChange::Set(key, _) => Some(key.clone()),
+            EnvChange::Unset(_) => None,
+        })
+        .collect();
 
-    // Save env var keys so we know what to unset on exit
-    let env_keys: Vec<String> = set_vars.iter().skip(2).map(|(k, _)| k.clone()).collect(); // Skip WHI_VENV_* vars
     if !env_keys.is_empty() {
         save_venv_env_keys(session_pid, &env_keys)?;
     }
+
+    // Append user env changes to maintain order
+    env_changes.extend(user_env_changes);
 
     // Reset venv history with computed PATH (isolated from global history)
     HistoryContext::venv(session_pid, dir)
@@ -498,8 +575,7 @@ pub fn source_from_path(dir_path: &str) -> io::Result<VenvTransition> {
 
     Ok(VenvTransition {
         new_path: guarded_path,
-        set_vars,
-        unset_vars,
+        env_changes,
     })
 }
 
@@ -524,14 +600,20 @@ pub fn exit_venv() -> io::Result<VenvTransition> {
     // Clear venv info
     clear_venv_info(session_pid);
 
-    // Build unset_vars: venv vars + user env vars
-    let mut unset_vars = vec!["WHI_VENV_NAME".to_string(), "WHI_VENV_DIR".to_string()];
-    unset_vars.extend(env_keys);
+    // Build env_changes: unset venv vars + user env vars
+    let mut env_changes = vec![
+        EnvChange::Unset("WHI_VENV_NAME".to_string()),
+        EnvChange::Unset("WHI_VENV_DIR".to_string()),
+    ];
+
+    // Add user env vars to unset
+    for key in env_keys {
+        env_changes.push(EnvChange::Unset(key));
+    }
 
     Ok(VenvTransition {
         new_path: restored_path,
-        set_vars: Vec::new(),
-        unset_vars,
+        env_changes,
     })
 }
 
@@ -549,17 +631,18 @@ pub fn update_restore_path(new_path: &str) -> io::Result<()> {
 mod tests {
     use super::*;
     use std::env;
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::MutexGuard;
     use tempfile::TempDir;
 
-    fn test_mutex() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
+    fn env_guard() -> MutexGuard<'static, ()> {
+        crate::test_utils::env_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     #[test]
     fn test_create_file() {
-        let _guard = test_mutex().lock().unwrap();
+        let _guard = env_guard();
         let temp_dir = TempDir::new().unwrap();
         let temp_path = temp_dir.path().to_path_buf();
         env::set_current_dir(&temp_path).unwrap();
@@ -584,7 +667,7 @@ mod tests {
 
     #[test]
     fn test_update_restore_path_refreshes_backup() {
-        let _guard = test_mutex().lock().unwrap();
+        let _guard = env_guard();
         let temp_dir = TempDir::new().unwrap();
         let xdg_before = env::var("XDG_RUNTIME_DIR").ok();
 
@@ -608,7 +691,7 @@ mod tests {
 
     #[test]
     fn test_source_from_path_reads_whi_file() {
-        let _guard = test_mutex().lock().unwrap();
+        let _guard = env_guard();
         let temp_dir = TempDir::new().unwrap();
         let xdg_before = env::var("XDG_RUNTIME_DIR").ok();
 
@@ -637,6 +720,10 @@ mod tests {
 
     #[test]
     fn test_expand_shell_vars() {
+        let _guard = env_guard();
+        let old_test_var = env::var("TEST_VAR").ok();
+        let old_home = env::var("HOME").ok();
+        let old_user = env::var("USER").ok();
         env::set_var("TEST_VAR", "hello");
         env::set_var("HOME", "/home/user");
         env::set_var("USER", "testuser");
@@ -674,13 +761,28 @@ mod tests {
         assert_eq!(expand_shell_vars("no vars here"), "no vars here");
         assert_eq!(expand_shell_vars("~username/path"), "~username/path"); // ~user not supported
 
-        env::remove_var("TEST_VAR");
-        env::remove_var("USER");
+        if let Some(val) = old_test_var {
+            env::set_var("TEST_VAR", val);
+        } else {
+            env::remove_var("TEST_VAR");
+        }
+
+        if let Some(val) = old_home {
+            env::set_var("HOME", val);
+        } else {
+            env::remove_var("HOME");
+        }
+
+        if let Some(val) = old_user {
+            env::set_var("USER", val);
+        } else {
+            env::remove_var("USER");
+        }
     }
 
     #[test]
     fn test_source_with_env_vars() {
-        let _guard = test_mutex().lock().unwrap();
+        let _guard = env_guard();
         let temp_dir = TempDir::new().unwrap();
         let xdg_before = env::var("XDG_RUNTIME_DIR").ok();
 
@@ -703,22 +805,22 @@ mod tests {
             "/usr/bin:/bin:/Users/testuser/.local/bin"
         );
 
-        // Check that env vars are in set_vars (after WHI_VENV_NAME and WHI_VENV_DIR)
-        assert!(transition.set_vars.len() >= 5);
-        assert!(transition
-            .set_vars
-            .iter()
-            .any(|(k, v)| k == "RUST_LOG" && v == "debug"));
-        assert!(transition
-            .set_vars
-            .iter()
-            .any(|(k, v)| k == "MY_VAR" && v == "hello world"));
+        // Check that env vars are in env_changes (after WHI_VENV_NAME and WHI_VENV_DIR)
+        assert!(transition.env_changes.len() >= 5);
+        assert!(transition.env_changes.iter().any(|change| matches!(
+            change,
+            EnvChange::Set(k, v) if k == "RUST_LOG" && v == "debug"
+        )));
+        assert!(transition.env_changes.iter().any(|change| matches!(
+            change,
+            EnvChange::Set(k, v) if k == "MY_VAR" && v == "hello world"
+        )));
 
         // Check that variable expansion worked in ENV
-        assert!(transition
-            .set_vars
-            .iter()
-            .any(|(k, v)| k == "EXPANDED" && v == "expanded_value"));
+        assert!(transition.env_changes.iter().any(|change| matches!(
+            change,
+            EnvChange::Set(k, v) if k == "EXPANDED" && v == "expanded_value"
+        )));
 
         // Set venv vars so exit_venv() knows we're in a venv
         env::set_var("WHI_VENV_NAME", "test");
@@ -727,16 +829,27 @@ mod tests {
         // Clean up for exit test
         let exit_transition = exit_venv().unwrap();
 
-        // Check that env vars are in unset_vars
-        assert!(exit_transition.unset_vars.contains(&"RUST_LOG".to_string()));
-        assert!(exit_transition.unset_vars.contains(&"MY_VAR".to_string()));
-        assert!(exit_transition.unset_vars.contains(&"EXPANDED".to_string()));
+        // Check that env vars are in env_changes as Unset operations
         assert!(exit_transition
-            .unset_vars
-            .contains(&"WHI_VENV_NAME".to_string()));
+            .env_changes
+            .iter()
+            .any(|change| matches!(change, EnvChange::Unset(k) if k == "RUST_LOG")));
         assert!(exit_transition
-            .unset_vars
-            .contains(&"WHI_VENV_DIR".to_string()));
+            .env_changes
+            .iter()
+            .any(|change| matches!(change, EnvChange::Unset(k) if k == "MY_VAR")));
+        assert!(exit_transition
+            .env_changes
+            .iter()
+            .any(|change| matches!(change, EnvChange::Unset(k) if k == "EXPANDED")));
+        assert!(exit_transition
+            .env_changes
+            .iter()
+            .any(|change| matches!(change, EnvChange::Unset(k) if k == "WHI_VENV_NAME")));
+        assert!(exit_transition
+            .env_changes
+            .iter()
+            .any(|change| matches!(change, EnvChange::Unset(k) if k == "WHI_VENV_DIR")));
 
         env::remove_var("WHI_VENV_NAME");
         env::remove_var("WHI_VENV_DIR");
@@ -754,7 +867,7 @@ mod tests {
 
     #[test]
     fn test_protected_env_vars_never_unset() {
-        let _guard = test_mutex().lock().unwrap();
+        let _guard = env_guard();
         let temp_dir = TempDir::new().unwrap();
         let xdg_before = env::var("XDG_RUNTIME_DIR").ok();
 
@@ -764,37 +877,21 @@ mod tests {
         env::set_var("WHI_SHELL_INITIALIZED", "1");
         env::set_var("__WHI_BIN", "/usr/local/bin/whi");
         env::set_var("PATH", "/usr/bin:/bin");
+        env::set_var("SAFE_TO_UNSET", "value");
 
-        // Create whifile that tries to unset protected vars
+        // Test 1: env.replace should NOT unset protected vars
         let whi_file = temp_dir.path().join("whifile");
         let content = r#"!path.replace
 /new/path
 
-!env.set
+!env.replace
 SAFE_VAR safe_value
-
-!env.unset
-WHI_SHELL_INITIALIZED
-WHI_SESSION_PID
-__WHI_BIN
-PATH
-HOME
-USER
-SHELL
-TERM
-TMPDIR
-SSH_AUTH_SOCK
-DISPLAY
-PWD
-IFS
-SAFE_TO_UNSET
 "#;
         fs::write(&whi_file, content).unwrap();
 
-        // Source the whifile
         let transition = source_from_path(temp_dir.path().to_str().unwrap()).unwrap();
 
-        // Verify protected vars are NOT in unset_vars
+        // Verify protected vars are NOT in env_changes as Unset (they're protected from env.replace)
         let protected_vars_to_test = [
             "WHI_SHELL_INITIALIZED",
             "WHI_SESSION_PID",
@@ -804,25 +901,58 @@ SAFE_TO_UNSET
             "USER",
             "SHELL",
             "TERM",
-            "TMPDIR",
-            "SSH_AUTH_SOCK",
-            "DISPLAY",
-            "PWD",
-            "IFS",
         ];
 
         for var in protected_vars_to_test {
             assert!(
-                !transition.unset_vars.contains(&var.to_string()),
-                "{} should never be unset (it's protected)",
+                !transition
+                    .env_changes
+                    .iter()
+                    .any(|change| matches!(change, EnvChange::Unset(k) if k == var)),
+                "{} should never be unset by env.replace (it's protected)",
                 var
             );
         }
 
-        // Verify non-protected vars CAN be unset
+        // Verify non-protected vars CAN be unset by env.replace
         assert!(
-            transition.unset_vars.contains(&"SAFE_TO_UNSET".to_string()),
-            "Non-protected vars should still be unset-able"
+            transition
+                .env_changes
+                .iter()
+                .any(|change| matches!(change, EnvChange::Unset(k) if k == "SAFE_TO_UNSET")),
+            "Non-protected vars should be unset by env.replace"
+        );
+
+        // Clean up for test 2
+        env::remove_var("WHI_VENV_NAME");
+        env::remove_var("WHI_VENV_DIR");
+
+        // Test 2: explicit env.unset SHOULD be able to unset protected vars
+        let content2 = r#"!path.replace
+/new/path
+
+!env.unset
+TERM
+SAFE_TO_UNSET
+"#;
+        fs::write(&whi_file, content2).unwrap();
+
+        let transition2 = source_from_path(temp_dir.path().to_str().unwrap()).unwrap();
+
+        // Verify that explicit unset works even for protected vars
+        assert!(
+            transition2
+                .env_changes
+                .iter()
+                .any(|change| matches!(change, EnvChange::Unset(k) if k == "TERM")),
+            "Explicit env.unset should work even for protected vars"
+        );
+        assert!(
+            transition2
+                .env_changes
+                .iter()
+                .any(|change| matches!(change, EnvChange::Unset(k) if k == "SAFE_TO_UNSET")),
+            "Explicit env.unset should work for non-protected vars"
         );
 
         // Clean up
@@ -831,6 +961,169 @@ SAFE_TO_UNSET
         env::remove_var("__WHI_BIN");
         env::remove_var("WHI_VENV_NAME");
         env::remove_var("WHI_VENV_DIR");
+        env::remove_var("SAFE_TO_UNSET");
+
+        if let Some(val) = xdg_before {
+            env::set_var("XDG_RUNTIME_DIR", val);
+        } else {
+            env::remove_var("XDG_RUNTIME_DIR");
+        }
+    }
+
+    #[test]
+    fn test_env_operation_ordering() {
+        let _guard = env_guard();
+        let temp_dir = TempDir::new().unwrap();
+        let xdg_before = env::var("XDG_RUNTIME_DIR").ok();
+
+        // Set up session
+        env::set_var("XDG_RUNTIME_DIR", temp_dir.path());
+        env::set_var("WHI_SESSION_PID", "11111");
+        env::set_var("PATH", "/usr/bin:/bin");
+        env::set_var("EXISTING_VAR", "initial_value");
+
+        // Test 1: Unset followed by Set for same key should result in Set (var exists)
+        let whi_file = temp_dir.path().join("whifile");
+        let content = r#"!path.replace
+/new/path
+
+!env.unset
+TEST_VAR
+
+!env.set
+TEST_VAR final_value
+"#;
+        fs::write(&whi_file, content).unwrap();
+
+        let transition = source_from_path(temp_dir.path().to_str().unwrap()).unwrap();
+
+        // Find the position of unset and set operations in env_changes
+        let mut unset_pos = None;
+        let mut set_pos = None;
+
+        for (i, change) in transition.env_changes.iter().enumerate() {
+            match change {
+                EnvChange::Unset(k) if k == "TEST_VAR" => unset_pos = Some(i),
+                EnvChange::Set(k, v) if k == "TEST_VAR" && v == "final_value" => set_pos = Some(i),
+                _ => {}
+            }
+        }
+
+        // Verify both operations exist and Unset comes before Set
+        assert!(unset_pos.is_some(), "Unset operation should exist");
+        assert!(set_pos.is_some(), "Set operation should exist");
+        assert!(
+            unset_pos.unwrap() < set_pos.unwrap(),
+            "Unset should come before Set to preserve ordering"
+        );
+
+        // Clean up for test 2
+        env::remove_var("WHI_VENV_NAME");
+        env::remove_var("WHI_VENV_DIR");
+
+        // Test 2: Set before Replace should result in Replace (simulated env state matters)
+        let content2 = r#"!path.replace
+/new/path
+
+!env.set
+WILL_BE_REPLACED keep_me
+
+!env.replace
+FINAL_VAR final_value
+"#;
+        fs::write(&whi_file, content2).unwrap();
+
+        let transition2 = source_from_path(temp_dir.path().to_str().unwrap()).unwrap();
+
+        // After the Replace operation, WILL_BE_REPLACED should be unset
+        // (because it's not in the replace list and it was added to simulated env by the Set)
+        let has_will_be_replaced_set = transition2.env_changes.iter().any(
+            |change| matches!(change, EnvChange::Set(k, v) if k == "WILL_BE_REPLACED" && v == "keep_me")
+        );
+        let has_will_be_replaced_unset = transition2
+            .env_changes
+            .iter()
+            .any(|change| matches!(change, EnvChange::Unset(k) if k == "WILL_BE_REPLACED"));
+
+        assert!(has_will_be_replaced_set, "SET should exist first");
+        assert!(
+            has_will_be_replaced_unset,
+            "UNSET should exist after Replace (because Set added it to simulated env)"
+        );
+
+        // Verify the Set comes before the Unset (follows operation order)
+        let set_pos = transition2
+            .env_changes
+            .iter()
+            .position(|change| matches!(change, EnvChange::Set(k, _) if k == "WILL_BE_REPLACED"));
+        let unset_pos = transition2
+            .env_changes
+            .iter()
+            .position(|change| matches!(change, EnvChange::Unset(k) if k == "WILL_BE_REPLACED"));
+
+        assert!(
+            set_pos.unwrap() < unset_pos.unwrap(),
+            "Set should come before Unset (preserving operation order)"
+        );
+
+        // Clean up for test 3
+        env::remove_var("WHI_VENV_NAME");
+        env::remove_var("WHI_VENV_DIR");
+
+        // Test 3: Complex ordering with multiple operations on same var
+        let content3 = r#"!path.replace
+/new/path
+
+!env.set
+FOO value1
+
+!env.set
+FOO value2
+
+!env.unset
+FOO
+
+!env.set
+FOO value3
+"#;
+        fs::write(&whi_file, content3).unwrap();
+
+        let transition3 = source_from_path(temp_dir.path().to_str().unwrap()).unwrap();
+
+        // Collect all operations on FOO in order
+        let foo_operations: Vec<_> = transition3
+            .env_changes
+            .iter()
+            .filter(|change| match change {
+                EnvChange::Set(k, _) | EnvChange::Unset(k) => k == "FOO",
+            })
+            .collect();
+
+        assert_eq!(foo_operations.len(), 4, "Should have 4 operations on FOO");
+
+        // Verify the exact order
+        assert!(
+            matches!(foo_operations[0], EnvChange::Set(k, v) if k == "FOO" && v == "value1"),
+            "First operation should be Set to value1"
+        );
+        assert!(
+            matches!(foo_operations[1], EnvChange::Set(k, v) if k == "FOO" && v == "value2"),
+            "Second operation should be Set to value2"
+        );
+        assert!(
+            matches!(foo_operations[2], EnvChange::Unset(k) if k == "FOO"),
+            "Third operation should be Unset"
+        );
+        assert!(
+            matches!(foo_operations[3], EnvChange::Set(k, v) if k == "FOO" && v == "value3"),
+            "Fourth operation should be Set to value3"
+        );
+
+        // Clean up
+        env::remove_var("WHI_SESSION_PID");
+        env::remove_var("WHI_VENV_NAME");
+        env::remove_var("WHI_VENV_DIR");
+        env::remove_var("EXISTING_VAR");
 
         if let Some(val) = xdg_before {
             env::set_var("XDG_RUNTIME_DIR", val);

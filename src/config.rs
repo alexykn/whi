@@ -5,41 +5,9 @@ use std::path::PathBuf;
 
 use crate::atomic_file::AtomicFile;
 
-fn default_protected_paths() -> Vec<PathBuf> {
-    #[cfg(target_os = "macos")]
-    {
-        vec![
-            PathBuf::from("/usr/local/bin"),
-            PathBuf::from("/usr/local/sbin"),
-            PathBuf::from("/usr/bin"),
-            PathBuf::from("/bin"),
-            PathBuf::from("/usr/sbin"),
-            PathBuf::from("/sbin"),
-        ]
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        return vec![
-            PathBuf::from("/usr/local/sbin"),
-            PathBuf::from("/usr/local/bin"),
-            PathBuf::from("/usr/sbin"),
-            PathBuf::from("/usr/bin"),
-            PathBuf::from("/sbin"),
-            PathBuf::from("/bin"),
-        ];
-    }
-
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    {
-        return vec![PathBuf::from("/usr/bin"), PathBuf::from("/bin")];
-    }
-}
-
 #[derive(Debug, Clone, Default)]
 pub struct Config {
     pub venv: VenvConfig,
-    pub protected: ProtectedConfig,
     pub search: SearchConfig,
 }
 
@@ -63,20 +31,6 @@ impl Default for SearchConfig {
         }
     }
 }
-
-#[derive(Debug, Clone)]
-pub struct ProtectedConfig {
-    pub paths: Vec<PathBuf>,
-}
-
-impl Default for ProtectedConfig {
-    fn default() -> Self {
-        Self {
-            paths: default_protected_paths(),
-        }
-    }
-}
-
 /// Get the config file path
 pub fn get_config_path() -> Result<PathBuf, String> {
     let home = env::var("HOME").map_err(|_| "HOME environment variable not set")?;
@@ -128,21 +82,13 @@ pub fn ensure_config_exists() -> Result<(), String> {
 /// Generate default config `TOML`
 fn generate_default_config() -> String {
     let defaults = Config::default();
-    let path_entries = defaults
-        .protected
-        .paths
-        .iter()
-        .map(|p| format!("  \"{}\"", p.to_string_lossy()))
-        .collect::<Vec<_>>()
-        .join(",\n");
 
     format!(
-        "# whi configuration file\n# This file is automatically created with default values\n\n[venv]\n# Auto-activate whifile when entering directory (default: {auto_file})\nauto_activate_file = {auto_file}\n\n# Auto-deactivate whifile when leaving directory (default: {auto_deactivate_file})\nauto_deactivate_file = {auto_deactivate_file}\n\n[search]\n# Enable fuzzy search for executables (default: {exec_fuzzy})\n# When enabled: 'whi cargo' finds cargo, cargo-clippy, cargo-fmt, etc.\n# When disabled: 'whi cargo' finds only exact match 'cargo'\nexecutable_search_fuzzy = {exec_fuzzy}\n\n# Enable fuzzy search for variables (default: {var_fuzzy})\n# When enabled: 'whi var cargo' finds CARGO_HOME, CARGO_TARGET_DIR, etc.\n# When disabled: 'whi var cargo' finds only exact match (case-insensitive)\nvariable_search_fuzzy = {var_fuzzy}\n\n[protected]\n# Protected paths are preserved during 'whi apply' even if deleted in session\n# This prevents breaking your shell by accidentally saving a minimal PATH\npaths = [\n{paths}\n]\n",
+        "# whi configuration file\n# This file is automatically created with default values\n\n[venv]\n# Auto-activate whifile when entering directory (default: {auto_file})\nauto_activate_file = {auto_file}\n\n# Auto-deactivate whifile when leaving directory (default: {auto_deactivate_file})\nauto_deactivate_file = {auto_deactivate_file}\n\n[search]\n# Enable fuzzy search for executables (default: {exec_fuzzy})\n# When enabled: 'whi cargo' finds cargo, cargo-clippy, cargo-fmt, etc.\n# When disabled: 'whi cargo' finds only exact match 'cargo'\nexecutable_search_fuzzy = {exec_fuzzy}\n\n# Enable fuzzy search for variables (default: {var_fuzzy})\n# When enabled: 'whi var cargo' finds CARGO_HOME, CARGO_TARGET_DIR, etc.\n# When disabled: 'whi var cargo' finds only exact match (case-insensitive)\nvariable_search_fuzzy = {var_fuzzy}\n\n# NOTE: Protected paths configuration has moved to ~/.whi/protected_paths\n# Protected variables configuration has moved to ~/.whi/protected_vars\n# These files control which paths/vars are preserved during operations\n",
         auto_file = defaults.venv.auto_activate_file,
         auto_deactivate_file = defaults.venv.auto_deactivate_file,
         exec_fuzzy = defaults.search.executable_search_fuzzy,
         var_fuzzy = defaults.search.variable_search_fuzzy,
-        paths = path_entries
     )
 }
 
@@ -150,9 +96,6 @@ fn generate_default_config() -> String {
 fn parse_config(content: &str) -> Result<Config, String> {
     let mut config = Config::default();
     let mut current_section = String::new();
-    let mut in_array = false;
-    let mut array_values: Vec<String> = Vec::new();
-    let mut array_key = String::new();
 
     for line in content.lines() {
         let line = line.trim();
@@ -168,42 +111,6 @@ fn parse_config(content: &str) -> Result<Config, String> {
             continue;
         }
 
-        // Handle array start
-        if line.contains('[') && !line.contains(']') {
-            if let Some(key_part) = line.split('=').next() {
-                array_key = key_part.trim().to_string();
-                in_array = true;
-                array_values.clear();
-                continue;
-            }
-        }
-
-        // Handle array values
-        if in_array {
-            if line.contains(']') {
-                // End of array
-                in_array = false;
-                if current_section == "protected" && array_key == "paths" {
-                    config.protected.paths = array_values
-                        .iter()
-                        .map(|s| PathBuf::from(s.trim_matches('"')))
-                        .collect();
-                }
-                continue;
-            } else if line.starts_with('"') || line.contains('"') {
-                // Extract quoted value
-                let value = line
-                    .trim()
-                    .trim_end_matches(',')
-                    .trim_matches('"')
-                    .to_string();
-                if !value.is_empty() {
-                    array_values.push(value);
-                }
-                continue;
-            }
-        }
-
         // Handle key-value pairs
         if let Some((key, value)) = line.split_once('=') {
             let key = key.trim();
@@ -217,7 +124,8 @@ fn parse_config(content: &str) -> Result<Config, String> {
                 config.search.executable_search_fuzzy = parse_bool(value)?;
             } else if current_section.as_str() == "search" && key == "variable_search_fuzzy" {
                 config.search.variable_search_fuzzy = parse_bool(value)?;
-            } // Ignore unknown keys and sections
+            }
+            // Ignore unknown keys and sections (including old [protected] section)
         }
     }
 
@@ -241,7 +149,6 @@ mod tests {
         let config = Config::default();
         assert!(!config.venv.auto_activate_file);
         assert!(!config.venv.auto_deactivate_file);
-        assert_eq!(config.protected.paths, default_protected_paths());
     }
 
     #[test]
@@ -250,6 +157,25 @@ mod tests {
 [venv]
 auto_activate_file = true
 auto_deactivate_file = true
+
+[search]
+executable_search_fuzzy = true
+variable_search_fuzzy = false
+"#;
+
+        let config = parse_config(toml).unwrap();
+        assert!(config.venv.auto_activate_file);
+        assert!(config.venv.auto_deactivate_file);
+        assert!(config.search.executable_search_fuzzy);
+        assert!(!config.search.variable_search_fuzzy);
+    }
+
+    #[test]
+    fn test_parse_config_ignores_old_protected_section() {
+        // Old config with [protected] section should be ignored gracefully
+        let toml = r#"
+[venv]
+auto_activate_file = true
 
 [protected]
 paths = [
@@ -260,9 +186,7 @@ paths = [
 
         let config = parse_config(toml).unwrap();
         assert!(config.venv.auto_activate_file);
-        assert!(config.venv.auto_deactivate_file);
-        assert_eq!(config.protected.paths.len(), 2);
-        assert_eq!(config.protected.paths[0], PathBuf::from("/bin"));
+        // No error - protected section is ignored
     }
 
     #[test]
@@ -271,6 +195,5 @@ paths = [
         let config = parse_config(&default_toml).unwrap();
         assert!(!config.venv.auto_activate_file);
         assert!(!config.venv.auto_deactivate_file);
-        assert_eq!(config.protected.paths, default_protected_paths());
     }
 }

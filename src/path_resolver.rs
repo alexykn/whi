@@ -142,18 +142,37 @@ pub fn looks_like_exact_path(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils;
 
     #[test]
     fn test_expand_tilde_with_slash() {
+        let _guard = test_utils::env_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let old_home = env::var("HOME").ok();
         env::set_var("HOME", "/home/testuser");
         assert_eq!(expand_tilde("~/bin"), "/home/testuser/bin");
         assert_eq!(expand_tilde("~/"), "/home/testuser/");
+        if let Some(val) = old_home {
+            env::set_var("HOME", val);
+        } else {
+            env::remove_var("HOME");
+        }
     }
 
     #[test]
     fn test_expand_tilde_bare() {
+        let _guard = test_utils::env_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let old_home = env::var("HOME").ok();
         env::set_var("HOME", "/home/testuser");
         assert_eq!(expand_tilde("~"), "/home/testuser");
+        if let Some(val) = old_home {
+            env::set_var("HOME", val);
+        } else {
+            env::remove_var("HOME");
+        }
     }
 
     #[test]

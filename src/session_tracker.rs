@@ -156,10 +156,8 @@ pub fn cleanup_old_sessions() -> Result<usize, String> {
 mod tests {
     use super::*;
     use std::env;
-    use std::sync::{Mutex, MutexGuard, OnceLock};
+    use std::sync::MutexGuard;
     use tempfile::TempDir;
-
-    static TEST_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
     struct SessionTempDir {
         _dir: TempDir,
@@ -169,8 +167,7 @@ mod tests {
 
     impl SessionTempDir {
         fn new() -> Self {
-            let guard = TEST_ENV_LOCK
-                .get_or_init(|| Mutex::new(()))
+            let guard = crate::test_utils::env_lock()
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             let dir = TempDir::new().unwrap();

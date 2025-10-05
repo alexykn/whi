@@ -354,6 +354,22 @@ fn main() {
         process::exit(2);
     }
 
+    // Auto-migrate protected paths from config.toml to ~/.whi/protected_paths
+    // This is a one-time migration that happens transparently on first run after upgrade
+    if let Err(e) = whi::protected_config::migrate_from_config_toml() {
+        eprintln!("Warning: Failed to migrate protected paths from config.toml: {e}");
+        eprintln!("Your configuration may not have been fully migrated.");
+        eprintln!("Please check ~/.whi/protected_paths and ~/.whi/config.toml");
+    }
+
+    // Ensure protected paths and vars files exist with defaults so users can discover them
+    if let Err(e) = whi::protected_config::ensure_protected_paths_exists() {
+        eprintln!("Warning: Failed to create protected_paths file: {e}");
+    }
+    if let Err(e) = whi::protected_config::ensure_protected_vars_exists() {
+        eprintln!("Warning: Failed to create protected_vars file: {e}");
+    }
+
     let exit_code = match command {
         Some(Command::Diff(diff)) => run_diff(diff),
         Some(Command::Apply(apply)) => run_apply(apply),
@@ -636,7 +652,7 @@ fn run_hidden_load(opts: &HiddenLoadArgs) -> i32 {
     use std::env;
     use whi::config_manager::load_profile;
     use whi::history::HistoryContext;
-    use whi::path_file::apply_path_sections;
+    use whi::path_file::{apply_path_sections, EnvOperation};
 
     let session_pid = env::var("WHI_SESSION_PID")
         .ok()
@@ -687,13 +703,22 @@ fn run_hidden_load(opts: &HiddenLoadArgs) -> i32 {
             // Print transition protocol
             println!("PATH\t{guarded_path}");
 
-            // Handle env vars (profiles typically don't have env vars, but support them anyway)
-            for (key, value) in &parsed.env.set {
-                let expanded_value = whi::venv_manager::expand_shell_vars(value);
-                println!("SET\t{key}\t{expanded_value}");
-            }
-            for key in &parsed.env.unset {
-                println!("UNSET\t{key}");
+            // Handle env operations in order
+            // Note: Profiles currently only support Set operations. Unset and Replace are not yet supported
+            // because profiles are meant to save PATH states, not perform environment replacement.
+            for operation in &parsed.env.operations {
+                match operation {
+                    EnvOperation::Set(key, value) => {
+                        let expanded_value = whi::venv_manager::expand_shell_vars(value);
+                        println!("SET\t{key}\t{expanded_value}");
+                    }
+                    EnvOperation::Unset(_) => {
+                        eprintln!("Warning: !env.unset not yet supported for profiles, ignoring");
+                    }
+                    EnvOperation::Replace(_) => {
+                        eprintln!("Warning: !env.replace not yet supported for profiles, ignoring");
+                    }
+                }
             }
 
             0
@@ -1078,11 +1103,19 @@ fn run_shorthands() -> i32 {
 }
 
 fn print_venv_transition(transition: &whi::venv_manager::VenvTransition) {
+    use whi::venv_manager::EnvChange;
+
     println!("PATH\t{}", transition.new_path);
-    for (key, value) in &transition.set_vars {
-        println!("SET\t{key}\t{value}");
-    }
-    for key in &transition.unset_vars {
-        println!("UNSET\t{key}");
+
+    // Print env changes in order
+    for change in &transition.env_changes {
+        match change {
+            EnvChange::Set(key, value) => {
+                println!("SET\t{key}\t{value}");
+            }
+            EnvChange::Unset(key) => {
+                println!("UNSET\t{key}");
+            }
+        }
     }
 }

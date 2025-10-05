@@ -65,16 +65,15 @@ impl PathGuard {
     ///
     /// Silently ignores binaries that are not found - no crashes if binary doesn't exist
     fn detect_protected_paths(&self, current_path: &str) -> Vec<PathBuf> {
-        let mut protected_dirs = Vec::new();
+        use std::collections::HashSet;
 
-        for binary in &self.protected_binaries {
-            if let Some(dir) = Self::find_binary_dir(current_path, binary) {
-                protected_dirs.push(dir);
-            }
-            // If binary not found (None), silently skip - user may not have it installed
-        }
+        let protected_dirs: HashSet<PathBuf> = self
+            .protected_binaries
+            .iter()
+            .filter_map(|binary| Self::find_binary_dir(current_path, binary))
+            .collect();
 
-        protected_dirs
+        protected_dirs.into_iter().collect()
     }
 
     /// Find the winning (first) directory for a binary in `PATH`
@@ -152,7 +151,8 @@ mod tests {
 
     #[test]
     fn test_guard_appends_to_empty_path() {
-        let guard = PathGuard::default();
+        // Use nonexistent binaries so detect_protected_paths returns empty
+        let guard = PathGuard::new(&["nonexistent_binary_xyz123"]);
 
         // If new_path is empty and we had protected paths, they'd be appended
         // (though in practice this shouldn't happen)
