@@ -107,6 +107,46 @@ function __whi_refresh_auto_config
     set -g __WHI_STAT_SKIP 0
 end
 
+function __whi_install_fish_deactivate_guard
+    if test "$_WHI_PYENV_GUARD_INSTALLED" = 1
+        return
+    end
+
+    if not functions -q deactivate
+        return
+    end
+
+    if functions -q __whi_original_deactivate
+        functions -e __whi_original_deactivate
+    end
+    functions -c deactivate __whi_original_deactivate
+
+    function deactivate --argument-names argv
+        if set -q WHI_ALLOW_DEACTIVATE
+            __whi_original_deactivate $argv
+        else
+            printf '%s\n' "environment managed by whi, please use 'whi exit' to leave" >&2
+            return 1
+        end
+    end
+
+    set -g _WHI_PYENV_GUARD_INSTALLED 1
+end
+
+function __whi_remove_fish_deactivate_guard
+    if test "$_WHI_PYENV_GUARD_INSTALLED" != 1
+        return
+    end
+
+    if functions -q deactivate
+        functions -e deactivate
+    end
+    if functions -q __whi_original_deactivate
+        functions -e __whi_original_deactivate
+    end
+    set -e _WHI_PYENV_GUARD_INSTALLED
+end
+
 function __whi_apply_transition
     set -l output (__whi_run $argv)
     set -l exit_code $status
@@ -114,9 +154,29 @@ function __whi_apply_transition
         return $exit_code
     end
 
+    set -l install_guard 0
+    set -l remove_guard 0
+
     for line in $output
         set -l parts (string split \t -- $line)
         switch $parts[1]
+            case DEACTIVATE_PYENV
+                # Deactivate Python venv if function exists
+                if type -q deactivate
+                    set -l prev_allow ""
+                    set -l had_prev 0
+                    if set -q WHI_ALLOW_DEACTIVATE
+                        set prev_allow $WHI_ALLOW_DEACTIVATE
+                        set had_prev 1
+                    end
+                    set -g WHI_ALLOW_DEACTIVATE 1
+                    deactivate
+                    if test $had_prev -eq 1
+                        set -g WHI_ALLOW_DEACTIVATE $prev_allow
+                    else
+                        set -e WHI_ALLOW_DEACTIVATE
+                    end
+                end
             case PATH
                 if test (count $parts) -ge 2
                     set -gx PATH (string split : -- $parts[2])
@@ -124,13 +184,53 @@ function __whi_apply_transition
             case SET
                 if test (count $parts) -ge 3
                     set -gx $parts[2] $parts[3]
+                    if test $parts[2] = "WHI_PYENV_MANAGED"
+                        set install_guard 1
+                    end
                 end
             case UNSET
                 if test (count $parts) -ge 2
                     set -e $parts[2]
+                    if test $parts[2] = "WHI_PYENV_MANAGED"
+                        set remove_guard 1
+                    end
+                end
+            case RUN
+                if test (count $parts) -ge 2
+                    set -l prev_allow ""
+                    set -l had_prev 0
+                    if set -q WHI_ALLOW_DEACTIVATE
+                        set prev_allow $WHI_ALLOW_DEACTIVATE
+                        set had_prev 1
+                    end
+                    set -g WHI_ALLOW_DEACTIVATE 1
+                    eval $parts[2]
+                    if test $had_prev -eq 1
+                        set -g WHI_ALLOW_DEACTIVATE $prev_allow
+                    else
+                        set -e WHI_ALLOW_DEACTIVATE
+                    end
+                end
+            case SOURCE
+                if test (count $parts) -ge 2 -a -f "$parts[2]"
+                    # Clean up _old_fish_prompt to allow venv activate.fish to work
+                    if functions -q _old_fish_prompt
+                        functions -e _old_fish_prompt
+                    end
+                    source "$parts[2]"
                 end
         end
     end
+
+    if test $install_guard -eq 1
+        __whi_install_fish_deactivate_guard
+    end
+
+    if test $remove_guard -eq 1
+        __whi_remove_fish_deactivate_guard
+    end
+
+    __whi_update_prompt
 
     return 0
 end
@@ -394,11 +494,6 @@ function __whi_venv_exit_fn
     __whi_apply_transition __venv_exit
 end
 
-function __whi_prompt
-    if test -n "$WHI_VENV_NAME"
-        echo "[$WHI_VENV_NAME] "
-    end
-end
 
 function __whi_cd_hook --on-variable PWD
     if not set -q __WHI_AUTO_CONFIG_LOADED
@@ -439,8 +534,8 @@ function __whi_cd_hook --on-variable PWD
     test -f "$PWD/whifile"; and set has_file 1
 
     # If already in a venv, check if we left that directory
-    if test -n "$WHI_VENV_DIR" -a "$__WHI_AUTO_DEACTIVATE" -eq 1
-        set -l root (string trim --right --chars='/' -- "$WHI_VENV_DIR")
+    if test -n "$VIRTUAL_ENV" -a "$__WHI_AUTO_DEACTIVATE" -eq 1
+        set -l root (string trim --right --chars='/' -- "$VIRTUAL_ENV")
         if not string match -q "$root" -- "$PWD"
             if not string match -q "$root/*" -- "$PWD"
                 # Left venv directory tree, deactivate
@@ -450,7 +545,7 @@ function __whi_cd_hook --on-variable PWD
     end
 
     # Auto-activate if configured and not already in venv
-    if test -z "$WHI_VENV_NAME" -a $__WHI_AUTO_FILE -eq 1 -a $has_file -eq 1
+    if test -z "$VIRTUAL_ENV_PROMPT" -a $__WHI_AUTO_FILE -eq 1 -a $has_file -eq 1
         __whi_venv_source "$PWD"
     end
 end
@@ -595,24 +690,118 @@ function whi
     __whi_run $argv
 end
 
-if not set -q __whi_rprompt_installed
-    set -g __whi_rprompt_installed 1
+# Prompt integration matches virtualenv by overriding fish_prompt while a whi venv is active.
 
-    if not functions -q __whi_original_fish_right_prompt
-        if functions -q fish_right_prompt
-            functions -c fish_right_prompt __whi_original_fish_right_prompt
+function __whi_prompt
+    if set -q VIRTUAL_ENV_DISABLE_PROMPT
+        if test "$VIRTUAL_ENV_DISABLE_PROMPT" = "1"
+            return
         end
     end
 
-    function fish_right_prompt
-        set -l prefix (__whi_prompt)
-        if functions -q __whi_original_fish_right_prompt
-            __whi_original_fish_right_prompt
+    set -l prompt ''
+    if set -q VIRTUAL_ENV_PROMPT
+        set prompt "$VIRTUAL_ENV_PROMPT"
+    else if set -q VIRTUAL_ENV
+        set prompt (basename -- "$VIRTUAL_ENV")
+    end
+
+    if test -n "$prompt"
+        printf '(%s) ' "$prompt"
+    end
+end
+
+function __whi_install_prompt
+    if set -q __WHI_FISH_PROMPT_OVERRIDE
+        return
+    end
+
+    if set -q VIRTUAL_ENV_DISABLE_PROMPT
+        if test "$VIRTUAL_ENV_DISABLE_PROMPT" = "1"
+            return
         end
+    end
+
+    if functions -q _old_fish_prompt
+        if not functions -q __whi_saved_old_fish_prompt
+            functions -c _old_fish_prompt __whi_saved_old_fish_prompt
+        end
+    end
+
+    if functions -q fish_prompt
+        if not functions -q __whi_original_fish_prompt
+            functions -c fish_prompt __whi_original_fish_prompt
+        end
+    end
+
+    function fish_prompt
+        set -l last_status $status
+        set -l prefix (__whi_prompt)
+        set -l prompt ''
+
+        if functions -q __whi_original_fish_prompt
+            if not functions -q _old_fish_prompt
+                if functions -q __whi_saved_old_fish_prompt
+                    functions -c __whi_saved_old_fish_prompt _old_fish_prompt
+                end
+            end
+            set prompt (__whi_original_fish_prompt 2>/dev/null)
+            if test $status -ne 0
+                set prompt ''
+            end
+        end
+
         if test -n "$prefix"
             printf '%s' "$prefix"
         end
+
+        if test -n "$prompt"
+            string join -- \n $prompt
+        end
+
+        return $last_status
     end
+
+    set -g __WHI_FISH_PROMPT_OVERRIDE 1
+end
+
+function __whi_remove_prompt
+    if not set -q __WHI_FISH_PROMPT_OVERRIDE
+        return
+    end
+
+    if functions -q fish_prompt
+        functions -e fish_prompt
+    end
+
+    if functions -q __whi_original_fish_prompt
+        functions -c __whi_original_fish_prompt fish_prompt
+    end
+
+    set -e __WHI_FISH_PROMPT_OVERRIDE
+end
+
+function __whi_update_prompt
+    if set -q VIRTUAL_ENV_DISABLE_PROMPT
+        if test "$VIRTUAL_ENV_DISABLE_PROMPT" = "1"
+            __whi_remove_prompt
+            return
+        end
+    end
+
+    if set -q VIRTUAL_ENV_PROMPT
+        if test -n "$VIRTUAL_ENV_PROMPT"
+            __whi_install_prompt
+            return
+        end
+    end
+
+    if set -q VIRTUAL_ENV
+        __whi_install_prompt
+        return
+    end
+
+    __whi_remove_prompt
 end
 
 
@@ -626,6 +815,8 @@ end
 if functions -q __whi_cd_hook
     __whi_cd_hook >/dev/null
 end
+
+__whi_update_prompt
 
 # IMPORTANT: Add this to the END of your fish config (~/.config/fish/config.fish):
 #   whi init fish | source

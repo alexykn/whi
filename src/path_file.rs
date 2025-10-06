@@ -7,7 +7,7 @@
 /// /bin
 ///
 /// !env.set
-/// VAR value
+/// `VAR` value
 /// ```
 ///
 /// # Environment Variable Operations (Order-Dependent)
@@ -18,10 +18,10 @@
 /// **Pattern 1: Replace then override**
 /// ```text
 /// !env.replace
-/// MIN_VAR minimal_value
+/// MIN_VAR `minimal_value`
 ///
 /// !env.set
-/// EXTRA_VAR additional_value
+/// EXTRA_VAR `additional_value`
 /// ```
 /// This first replaces the entire environment (unsetting all non-protected vars),
 /// then sets `EXTRA_VAR` on top of the minimal environment.
@@ -29,7 +29,7 @@
 /// **Pattern 2: Set then unset**
 /// ```text
 /// !env.set
-/// DEBUG 1
+/// `DEBUG` 1
 ///
 /// !env.unset
 /// PRODUCTION_KEY
@@ -46,7 +46,7 @@
 /// /bin
 ///
 /// ENV!
-/// VAR value
+/// `VAR` value
 /// ```
 /// `PATH` section configuration for whifile
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -78,11 +78,33 @@ pub struct EnvSections {
     pub operations: Vec<EnvOperation>,
 }
 
+/// Individual extra directive for sourcing scripts
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExtraDirective {
+    /// Source arbitrary script (user ensures shell compatibility)
+    Source {
+        script: String,
+        on_exit: Option<String>,
+    },
+    /// Python venv directory (auto-selects activate/activate.fish)
+    PyEnv(String),
+}
+
+/// `!whi.extra` section configuration for whifile
+/// Directives are executed in the order they appear in the file
+/// IMPORTANT: Extra directives are executed `AFTER` PATH and `ENV` changes
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ExtraSections {
+    /// Ordered list of extra directives
+    pub directives: Vec<ExtraDirective>,
+}
+
 /// Parsed path file containing both `PATH` and `ENV` vars
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParsedPathFile {
     pub path: PathSections,
     pub env: EnvSections,
+    pub extra: ExtraSections,
 }
 
 /// Format a `PATH` string into the human-friendly file format (v2 format)
@@ -116,75 +138,73 @@ pub fn format_path_file_with_env(path: &str, env_vars: &[(String, String)]) -> S
 /// Generate default whifile template with commented sections and protected paths
 #[must_use]
 pub fn default_whifile_template(protected_paths: &[String]) -> String {
-    let mut output = String::new();
+    let paths_section = if protected_paths.is_empty() {
+        String::from("\n")
+    } else {
+        format!("{}\n\n", protected_paths.join("\n"))
+    };
 
-    // PATH section header with exclusivity rules
-    output.push_str("# PATH directives (choose ONE approach):\n");
-    output.push_str("#\n");
-    output.push_str("# !path.replace - Replace entire session PATH\n");
-    output.push_str("#   (exclusive: cannot be used with !path.append or !path.prepend)\n");
-    output.push_str("#   Protected paths are included by default to prevent system breakage\n");
-    output.push_str("#\n");
-    output.push_str("!path.replace\n");
-
-    // Add protected paths
-    for path in protected_paths {
-        output.push_str(path);
-        output.push('\n');
-    }
-    output.push('\n');
-
-    // Alternative: prepend/append (commented out)
-    output.push_str("# !path.prepend - Add paths to beginning of session PATH\n");
-    output.push_str("#   (can be combined with !path.append)\n");
-    output.push_str("#\n");
-    output.push_str("# !path.prepend\n");
-    output.push_str("# /my/custom/path\n\n");
-
-    output.push_str("# !path.append - Add paths to end of session PATH\n");
-    output.push_str("#   (can be combined with !path.prepend)\n");
-    output.push_str("#\n");
-    output.push_str("# !path.append\n");
-    output.push_str("# /another/path\n\n");
-
-    // ENV section header with order-dependent behavior
-    output.push_str("# ENV directives (IMPORTANT: executed in the order they appear!):\n");
-    output.push_str("#\n");
-    output.push_str("# Operations are processed sequentially, allowing powerful patterns:\n");
-    output.push_str("# 1. !env.replace -> !env.set   (minimal env + extras)\n");
-    output.push_str("# 2. !env.set -> !env.unset     (set then selectively remove)\n");
-    output.push_str("# 3. Multiple sections of same type work as expected\n");
-    output.push_str("#\n");
-    output.push_str("# !env.set - Set environment variables\n");
-    output.push_str("#\n");
-    output.push_str("!env.set\n");
-    output.push_str("# KEY value\n\n");
-
-    output.push_str("# !env.unset - Unset environment variables\n");
-    output.push_str("#   Works on any variable, including those set above\n");
-    output.push_str("#\n");
-    output.push_str("# !env.unset\n");
-    output.push_str("# VAR_TO_REMOVE\n\n");
-
-    output.push_str("# !env.replace - Replace entire environment\n");
-    output.push_str("#   Unsets ALL non-protected vars, then sets only the ones listed below\n");
-    output.push_str("#   Protected vars (see ~/.whi/protected_vars) are NEVER unset by replace\n");
-    output.push_str(
-        "#   To unset protected vars, use explicit !env.unset AFTER replace (careful!)\n",
-    );
-    output.push_str("#\n");
-    output.push_str("# !env.replace\n");
-    output.push_str("# KEY value\n");
-    output.push_str("# KEY2 value2\n\n");
-
-    output.push_str("# Common pattern: Minimal environment + selective additions\n");
-    output.push_str("# !env.replace\n");
-    output.push_str("# MINIMAL_VAR value    # Start with minimal env\n");
-    output.push_str("#\n");
-    output.push_str("# !env.set             # Then add extras (executed AFTER replace)\n");
-    output.push_str("# EXTRA_VAR additional_value\n");
-
-    output
+    format!(
+        concat!(
+            "# PATH directives (choose ONE approach):\n",
+            "#\n",
+            "# !path.replace - Replace entire session PATH\n",
+            "#   (exclusive: cannot be used with !path.append or !path.prepend)\n",
+            "#   Protected paths are included by default to prevent system breakage\n",
+            "#\n",
+            "!path.replace\n",
+            "{paths}",
+            "# !path.prepend - Add paths to beginning of session PATH\n",
+            "#   (can be combined with !path.append)\n",
+            "#\n",
+            "# !path.prepend\n",
+            "# /my/custom/path\n",
+            "\n",
+            "# !path.append - Add paths to end of session PATH\n",
+            "#   (can be combined with !path.prepend)\n",
+            "#\n",
+            "# !path.append\n",
+            "# /another/path\n",
+            "\n",
+            "\n",
+            "# ENV directives (IMPORTANT: executed in the order they appear!)\n",
+            "#\n",
+            "# !env.set - Set environment variables\n",
+            "#\n",
+            "!env.set\n",
+            "TEST_VAR1 $HOME\n",
+            "TEST_VAR2 $(pwd)\n",
+            "TEST_VAR3 Servus\n",
+            "\n",
+            "# !env.unset - Unset environment variables\n",
+            "#\n",
+            "# !env.unset\n",
+            "# VAR_TO_REMOVE\n",
+            "\n",
+            "# !env.replace - Replace entire environment\n",
+            "#   Unsets ALL non-protected vars, then sets only the ones listed below\n",
+            "#\n",
+            "# !env.replace\n",
+            "# KEY value\n",
+            "# KEY2 value2\n",
+            "\n",
+            "\n",
+            "# EXTRA directives (stuff I think might be cool for automation):\n",
+            "#\n",
+            "# !whi.extra - runs after PATH/ENV\n",
+            "#   $source /path/script [exit-cmd]  # optional exit command runs on 'whi exit'\n",
+            "#   $pyenv /path/to/venv             # activate py-venv, leave with 'whi exit'\n",
+            "#\n",
+            "# !whi.extra\n",
+            "# $pyenv ~/.venvs/myproject\n",
+            "# $source ~/my-custom-setup.sh [optional_command_to_run_on_exit]\n",
+            "#\n",
+            "# NOTE: you can auto source and exit whifiles on cd by setting\n",
+            "# auto_activate_file = true and auto_deactivate_file = true in\n",
+            "# ~/.whi/config.toml\n"
+        ),
+        paths = paths_section
+    )
 }
 
 /// Parse `PATH` file - supports v2 (!path.replace), v1 (PATH!), and legacy (colon-separated) formats
@@ -217,7 +237,7 @@ pub fn parse_path_file(content: &str) -> Result<ParsedPathFile, String> {
     }
 }
 
-/// Process PATH section line
+/// Process `PATH` section line
 fn process_path_line(section: &str, line: &str, path_sections: &mut PathSections) {
     match section {
         "replace" => {
@@ -236,7 +256,7 @@ fn process_path_line(section: &str, line: &str, path_sections: &mut PathSections
     }
 }
 
-/// Process ENV section line
+/// Process `ENV` section line
 fn process_env_line(
     section: &str,
     line: &str,
@@ -264,14 +284,105 @@ fn process_env_line(
     Ok(())
 }
 
+/// Handle section header and return new section state
+/// Returns (`path_section`, `env_section`, `extra_section`)
+fn handle_section_header(
+    line: &str,
+) -> Option<(
+    Option<&'static str>,
+    Option<&'static str>,
+    Option<&'static str>,
+)> {
+    match line {
+        "!path.replace" | "!path.saved" => Some((Some("replace"), None, None)),
+        "!path.prepend" => Some((Some("prepend"), None, None)),
+        "!path.append" => Some((Some("append"), None, None)),
+        "!env.replace" => Some((None, Some("replace"), None)),
+        "!env.set" | "!env.saved" => Some((None, Some("set"), None)),
+        "!env.unset" => Some((None, Some("unset"), None)),
+        "!whi.extra" => Some((None, None, Some("extra"))),
+        _ => None,
+    }
+}
+
+/// Process !whi.extra section line
+fn process_extra_line(line: &str, extra_sections: &mut ExtraSections) -> Result<(), String> {
+    // Check for equals sign (common mistake)
+    if line.contains('=') {
+        let parts: Vec<&str> = line.splitn(2, '=').collect();
+        if parts.len() == 2 {
+            return Err(format!(
+                "Invalid syntax: '{line}'. Use space instead of '='. Try '${} {}' instead",
+                parts[0].trim_start_matches('$'),
+                parts[1]
+            ));
+        }
+    }
+
+    // Parse directive: $source /path or $pyenv /path
+    if !line.starts_with('$') {
+        return Err(format!(
+            "Invalid !whi.extra directive: '{line}'. Expected '$source <path> [exit_command]' or '$pyenv <path>'"
+        ));
+    }
+
+    let mut parts = line[1..].splitn(2, char::is_whitespace);
+    let directive = parts.next().ok_or_else(|| {
+        format!(
+            "Invalid !whi.extra directive: '{line}'. Expected '$source <path> [exit_command]' or '$pyenv <path>'"
+        )
+    })?;
+
+    let remainder = parts
+        .next()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| format!("Missing path in !whi.extra directive '${directive}'"))?;
+
+    match directive {
+        "source" => {
+            let mut inner = remainder.splitn(2, char::is_whitespace);
+            let script = inner.next().unwrap_or_default();
+            if script.is_empty() {
+                return Err("$source directive requires a script path".to_string());
+            }
+
+            let on_exit = inner
+                .next()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(ToString::to_string);
+
+            extra_sections.directives.push(ExtraDirective::Source {
+                script: script.to_string(),
+                on_exit,
+            });
+        }
+        "pyenv" => {
+            extra_sections
+                .directives
+                .push(ExtraDirective::PyEnv(remainder.to_string()));
+        }
+        _ => {
+            return Err(format!(
+                "Unknown !whi.extra directive: '${directive}'. Expected '$source' or '$pyenv'"
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 fn parse_v2_format(content: &str) -> Result<ParsedPathFile, String> {
     use crate::file_utils::strip_inline_comment;
 
     let mut path_sections = PathSections::default();
     let mut env_sections = EnvSections::default();
+    let mut extra_sections = ExtraSections::default();
 
     let mut current_path_section: Option<&str> = None;
     let mut current_env_section: Option<&str> = None;
+    let mut current_extra_section: Option<&str> = None;
     let mut env_replace_buffer: Vec<(String, String)> = Vec::new();
 
     let flush_replace = |env_sections: &mut EnvSections,
@@ -300,44 +411,12 @@ fn parse_v2_format(content: &str) -> Result<ParsedPathFile, String> {
         }
 
         // Check for section headers
-        match line {
-            "!path.replace" | "!path.saved" => {
-                flush_replace(&mut env_sections, &mut env_replace_buffer);
-                current_path_section = Some("replace");
-                current_env_section = None;
-                continue;
-            }
-            "!path.prepend" => {
-                flush_replace(&mut env_sections, &mut env_replace_buffer);
-                current_path_section = Some("prepend");
-                current_env_section = None;
-                continue;
-            }
-            "!path.append" => {
-                flush_replace(&mut env_sections, &mut env_replace_buffer);
-                current_path_section = Some("append");
-                current_env_section = None;
-                continue;
-            }
-            "!env.replace" => {
-                flush_replace(&mut env_sections, &mut env_replace_buffer);
-                current_path_section = None;
-                current_env_section = Some("replace");
-                continue;
-            }
-            "!env.set" | "!env.saved" => {
-                flush_replace(&mut env_sections, &mut env_replace_buffer);
-                current_path_section = None;
-                current_env_section = Some("set");
-                continue;
-            }
-            "!env.unset" => {
-                flush_replace(&mut env_sections, &mut env_replace_buffer);
-                current_path_section = None;
-                current_env_section = Some("unset");
-                continue;
-            }
-            _ => {}
+        if let Some((path, env, extra)) = handle_section_header(line) {
+            flush_replace(&mut env_sections, &mut env_replace_buffer);
+            current_path_section = path;
+            current_env_section = env;
+            current_extra_section = extra;
+            continue;
         }
 
         // Process content based on current section
@@ -345,6 +424,8 @@ fn parse_v2_format(content: &str) -> Result<ParsedPathFile, String> {
             process_path_line(section, line, &mut path_sections);
         } else if let Some(section) = current_env_section {
             process_env_line(section, line, &mut env_sections, &mut env_replace_buffer)?;
+        } else if current_extra_section.is_some() {
+            process_extra_line(line, &mut extra_sections)?;
         }
     }
 
@@ -356,12 +437,16 @@ fn parse_v2_format(content: &str) -> Result<ParsedPathFile, String> {
         return Err("Cannot combine !path.replace with !path.prepend or !path.append".to_string());
     }
 
-    if path_sections.replace.is_none()
-        && path_sections.prepend.is_empty()
-        && path_sections.append.is_empty()
-    {
+    // Validate that at least ONE directive has content
+    let has_path = path_sections.replace.is_some()
+        || !path_sections.prepend.is_empty()
+        || !path_sections.append.is_empty();
+    let has_env = !env_sections.operations.is_empty();
+    let has_extra = !extra_sections.directives.is_empty();
+
+    if !has_path && !has_env && !has_extra {
         return Err(
-            "No PATH entries found in file (template needs to be edited with actual paths)"
+            "Empty whifile: at least one directive (!path.*, !env.*, or !whi.extra) must have content"
                 .to_string(),
         );
     }
@@ -369,6 +454,7 @@ fn parse_v2_format(content: &str) -> Result<ParsedPathFile, String> {
     Ok(ParsedPathFile {
         path: path_sections,
         env: env_sections,
+        extra: extra_sections,
     })
 }
 
@@ -472,14 +558,15 @@ fn parse_v1_format(content: &str) -> Result<ParsedPathFile, String> {
         }
     }
 
-    if path_entries.is_empty() {
-        return Err("No PATH entries found in file".to_string());
-    }
-
     // Convert to v2 format: PATH! becomes !path.replace, ENV! becomes !env.set operations
     let mut operations = Vec::new();
     for (key, value) in env_vars {
         operations.push(EnvOperation::Set(key, value));
+    }
+
+    // Validate that at least PATH or ENV has content
+    if path_entries.is_empty() && operations.is_empty() {
+        return Err("Empty whifile: must have PATH! entries or ENV! entries".to_string());
     }
 
     Ok(ParsedPathFile {
@@ -489,6 +576,7 @@ fn parse_v1_format(content: &str) -> Result<ParsedPathFile, String> {
             append: Vec::new(),
         },
         env: EnvSections { operations },
+        extra: ExtraSections::default(), // v1 format has no extra directives
     })
 }
 
@@ -559,7 +647,8 @@ fn parse_legacy_format(content: &str) -> Result<ParsedPathFile, String> {
             prepend: Vec::new(),
             append: Vec::new(),
         },
-        env: EnvSections::default(), // Legacy format has no ENV vars
+        env: EnvSections::default(),     // Legacy format has no ENV vars
+        extra: ExtraSections::default(), // Legacy format has no extra directives
     })
 }
 
@@ -908,5 +997,139 @@ MY_VAR value # some value
         assert!(
             matches!(&parsed.env.operations[0], EnvOperation::Set(k, v) if k == "MY_VAR" && v == "value")
         );
+    }
+
+    #[test]
+    fn test_parse_whi_extra_section() {
+        let content = r"!path.replace
+/usr/bin
+/bin
+
+!env.set
+VAR value
+
+!whi.extra
+$source ~/my-script.sh
+$pyenv ~/.venvs/myproject
+";
+
+        let parsed = parse_path_file(content).unwrap();
+        assert_eq!(parsed.extra.directives.len(), 2);
+        assert!(matches!(
+            &parsed.extra.directives[0],
+            ExtraDirective::Source {
+                script,
+                on_exit,
+            } if script == "~/my-script.sh" && on_exit.is_none()
+        ));
+        assert!(
+            matches!(&parsed.extra.directives[1], ExtraDirective::PyEnv(p) if p == "~/.venvs/myproject")
+        );
+    }
+
+    #[test]
+    fn test_whi_extra_invalid_no_dollar() {
+        let content = r"!path.replace
+/usr/bin
+
+!whi.extra
+source ~/script.sh
+";
+
+        let result = parse_path_file(content);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("Invalid !whi.extra directive"));
+        assert!(err.contains("Expected '$source <path> [exit_command]' or '$pyenv <path>'"));
+    }
+
+    #[test]
+    fn test_whi_extra_invalid_equals() {
+        let content = r"!path.replace
+/usr/bin
+
+!whi.extra
+$source=~/script.sh
+";
+
+        let result = parse_path_file(content);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("Invalid syntax"));
+        assert!(err.contains("Use space instead of '='"));
+        assert!(err.contains("Try '$source ~/script.sh'"));
+    }
+
+    #[test]
+    fn test_whi_extra_missing_path() {
+        let content = r"!path.replace
+/usr/bin
+
+!whi.extra
+$source
+";
+
+        let result = parse_path_file(content);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("Missing path"));
+        assert!(err.contains("$source"));
+    }
+
+    #[test]
+    fn test_whi_extra_unknown_directive() {
+        let content = r"!path.replace
+/usr/bin
+
+!whi.extra
+$foobar /some/path
+";
+
+        let result = parse_path_file(content);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("Unknown !whi.extra directive"));
+        assert!(err.contains("$foobar"));
+    }
+
+    #[test]
+    fn test_whi_extra_source_with_exit_command() {
+        let content = r"!path.replace
+/usr/bin
+
+!whi.extra
+$source ~/.config/setup.sh cleanup_command --flag
+";
+
+        let parsed = parse_path_file(content).unwrap();
+        assert_eq!(parsed.extra.directives.len(), 1);
+        assert!(matches!(
+            &parsed.extra.directives[0],
+            ExtraDirective::Source {
+                script,
+                on_exit,
+            } if script == "~/.config/setup.sh" && on_exit.as_deref() == Some("cleanup_command --flag")
+        ));
+    }
+
+    #[test]
+    fn test_whi_extra_empty_section() {
+        let content = r"!path.replace
+/usr/bin
+
+!whi.extra
+";
+
+        let parsed = parse_path_file(content).unwrap();
+        assert!(parsed.extra.directives.is_empty());
+    }
+
+    #[test]
+    fn test_default_template_includes_whi_extra() {
+        let template = default_whifile_template(&vec!["/usr/bin".to_string()]);
+        assert!(template.contains("!whi.extra"));
+        assert!(template.contains("$source"));
+        assert!(template.contains("$pyenv"));
+        assert!(template.contains("executed LAST"));
     }
 }

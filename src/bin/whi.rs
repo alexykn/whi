@@ -680,20 +680,18 @@ fn run_hidden_load(opts: &HiddenLoadArgs) -> i32 {
                 .collect::<Vec<_>>()
                 .join(":");
 
-            // Update history if not in venv
-            if env::var("WHI_VENV_NAME").is_err() {
+            // Update history using whi-owned identifier when available
+            if env::var("VIRTUAL_ENV_PROMPT").is_err() {
                 if let Ok(history) = HistoryContext::global(session_pid) {
                     let _ = history.write_snapshot(&expanded_path);
                 }
-            } else {
-                // In venv - update venv history
-                if let Ok(venv_dir) = env::var("WHI_VENV_DIR") {
-                    if let Ok(history) =
-                        HistoryContext::venv(session_pid, std::path::Path::new(&venv_dir))
-                    {
-                        let _ = history.write_snapshot(&expanded_path);
-                    }
+            } else if let Some(venv_dir) = whi::venv_manager::current_venv_dir() {
+                if let Ok(history) = HistoryContext::venv(session_pid, venv_dir.as_path()) {
+                    let _ = history.write_snapshot(&expanded_path);
                 }
+            } else if let Ok(history) = HistoryContext::global(session_pid) {
+                // Fallback: missing metadata, keep session usable
+                let _ = history.write_snapshot(&expanded_path);
             }
 
             // Apply path guard to preserve critical binaries (whi, zoxide)
@@ -900,15 +898,17 @@ fn run_hidden_add(args: &HiddenAddArgs) -> i32 {
 
     let new_path = searcher.to_path_string();
 
-    // Update history if not in venv
-    if env::var("WHI_VENV_NAME").is_err() {
+    // Update history using whi-owned identifier when available
+    if env::var("VIRTUAL_ENV_PROMPT").is_err() {
         if let Ok(history) = HistoryContext::global(session_pid) {
             let _ = history.write_snapshot(&new_path);
         }
-    } else if let Ok(venv_dir) = env::var("WHI_VENV_DIR") {
-        if let Ok(history) = HistoryContext::venv(session_pid, std::path::Path::new(&venv_dir)) {
+    } else if let Some(venv_dir) = whi::venv_manager::current_venv_dir() {
+        if let Ok(history) = HistoryContext::venv(session_pid, venv_dir.as_path()) {
             let _ = history.write_snapshot(&new_path);
         }
+    } else if let Ok(history) = HistoryContext::global(session_pid) {
+        let _ = history.write_snapshot(&new_path);
     }
 
     // Apply path guard to preserve critical binaries (whi, zoxide)
@@ -1105,6 +1105,11 @@ fn run_shorthands() -> i32 {
 fn print_venv_transition(transition: &whi::venv_manager::VenvTransition) {
     use whi::venv_manager::EnvChange;
 
+    // CRITICAL: Deactivate Python venv BEFORE restoring PATH
+    if transition.needs_pyenv_deactivate {
+        println!("DEACTIVATE_PYENV");
+    }
+
     println!("PATH\t{}", transition.new_path);
 
     // Print env changes in order
@@ -1115,6 +1120,12 @@ fn print_venv_transition(transition: &whi::venv_manager::VenvTransition) {
             }
             EnvChange::Unset(key) => {
                 println!("UNSET\t{key}");
+            }
+            EnvChange::Source(path) => {
+                println!("SOURCE\t{path}");
+            }
+            EnvChange::Run(command) => {
+                println!("RUN\t{command}");
             }
         }
     }

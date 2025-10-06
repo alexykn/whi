@@ -50,11 +50,8 @@ fn history_for_current_scope() -> Result<HistoryContext, String> {
     let pid = get_session_pid().map_err(|e| e.to_string())?;
 
     if venv_manager::is_in_venv() {
-        if let Ok(dir) = env::var("WHI_VENV_DIR") {
-            if !dir.is_empty() {
-                let path = PathBuf::from(dir);
-                return HistoryContext::venv(pid, path.as_path());
-            }
+        if let Some(path) = venv_manager::current_venv_dir() {
+            return HistoryContext::venv(pid, path.as_path());
         }
     }
 

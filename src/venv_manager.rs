@@ -19,12 +19,17 @@ pub enum EnvChange {
     Set(String, String),
     /// Unset a variable
     Unset(String),
+    /// Source a script file
+    Source(String),
+    /// Execute a command (typically during exit)
+    Run(String),
 }
 
 #[derive(Debug, Clone)]
 pub struct VenvTransition {
     pub new_path: String,
     pub env_changes: Vec<EnvChange>,
+    pub needs_pyenv_deactivate: bool,
 }
 
 /// Returns the list of protected environment variables that should never be unset
@@ -115,8 +120,10 @@ fn protected_env_vars() -> Vec<String> {
             "WHI_SESSION_PID".to_string(),
             "__WHI_BIN".to_string(),
             // Whi venv state
-            "WHI_VENV_NAME".to_string(),
             "WHI_VENV_DIR".to_string(),
+            "WHI_PYENV_MANAGED".to_string(),
+            "VIRTUAL_ENV_PROMPT".to_string(),
+            "VIRTUAL_ENV".to_string(),
         ]
     })
 }
@@ -124,7 +131,28 @@ fn protected_env_vars() -> Vec<String> {
 /// Check if we're in a venv
 #[must_use]
 pub fn is_in_venv() -> bool {
-    env::var("WHI_VENV_NAME").is_ok()
+    env::var("VIRTUAL_ENV_PROMPT").is_ok()
+}
+
+/// Returns the directory backing the active whi-managed venv, if any.
+///
+/// Uses whi-owned metadata so Python's activate script cannot clobber
+/// the identifier we rely on for history bookkeeping.
+#[must_use]
+pub fn current_venv_dir() -> Option<PathBuf> {
+    if !is_in_venv() {
+        return None;
+    }
+
+    if let Ok(dir) = env::var("WHI_VENV_DIR") {
+        let trimmed = dir.trim();
+        if !trimmed.is_empty() {
+            return Some(PathBuf::from(trimmed));
+        }
+    }
+
+    let session_pid = get_session_pid();
+    load_saved_venv_dir(session_pid).ok().flatten()
 }
 
 /// Get session `PID` from environment
@@ -185,6 +213,11 @@ fn get_venv_env_keys_file(session_pid: u32) -> io::Result<PathBuf> {
     Ok(get_session_dir(session_pid)?.join("venv_env_keys"))
 }
 
+/// Get exit commands file path
+fn get_venv_exit_commands_file(session_pid: u32) -> io::Result<PathBuf> {
+    Ok(get_session_dir(session_pid)?.join("venv_exit_commands"))
+}
+
 /// Save `PATH` for venv restore
 fn save_venv_restore(session_pid: u32, path: &str) -> io::Result<()> {
     let restore_file = get_venv_restore_file(session_pid)?;
@@ -207,6 +240,22 @@ fn save_venv_info(session_pid: u32, dir: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Load saved venv directory (if any)
+fn load_saved_venv_dir(session_pid: u32) -> io::Result<Option<PathBuf>> {
+    let dir_file = get_venv_dir_file(session_pid)?;
+    if !dir_file.exists() {
+        return Ok(None);
+    }
+
+    let content = fs::read_to_string(dir_file)?;
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(PathBuf::from(trimmed)))
+    }
+}
+
 /// Save env var keys for venv (so we know what to unset on exit)
 fn save_venv_env_keys(session_pid: u32, keys: &[String]) -> io::Result<()> {
     let env_keys_file = get_venv_env_keys_file(session_pid)?;
@@ -227,6 +276,62 @@ fn load_venv_env_keys(session_pid: u32) -> io::Result<Vec<String>> {
         .collect())
 }
 
+/// Save exit commands to replay on `whi exit`
+fn save_venv_exit_commands(session_pid: u32, commands: &[String]) -> io::Result<()> {
+    let file = get_venv_exit_commands_file(session_pid)?;
+    if commands.is_empty() {
+        if file.exists() {
+            let _ = fs::remove_file(&file);
+        }
+        return Ok(());
+    }
+
+    fs::write(file, commands.join("\n"))?;
+    Ok(())
+}
+
+/// Load exit commands (best-effort)
+fn load_venv_exit_commands(session_pid: u32) -> Vec<String> {
+    get_venv_exit_commands_file(session_pid)
+        .ok()
+        .and_then(|path| fs::read_to_string(path).ok())
+        .map(|content| {
+            content
+                .lines()
+                .filter(|line| !line.trim().is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Get pyenv deactivate flag file path
+fn get_pyenv_deactivate_file(session_pid: u32) -> io::Result<PathBuf> {
+    Ok(get_session_dir(session_pid)?.join("pyenv_active"))
+}
+
+/// Save pyenv deactivate flag (indicates pyenv was activated)
+fn save_pyenv_deactivate_flag(session_pid: u32) -> io::Result<()> {
+    let flag_file = get_pyenv_deactivate_file(session_pid)?;
+    fs::write(flag_file, "1")?;
+    Ok(())
+}
+
+/// Load pyenv deactivate flag (returns true if pyenv was activated)
+fn load_pyenv_deactivate_flag(session_pid: u32) -> bool {
+    get_pyenv_deactivate_file(session_pid)
+        .ok()
+        .and_then(|f| fs::read_to_string(f).ok())
+        .is_some()
+}
+
+/// Clear pyenv deactivate flag
+fn clear_pyenv_deactivate_flag(session_pid: u32) {
+    if let Ok(file) = get_pyenv_deactivate_file(session_pid) {
+        let _ = fs::remove_file(file);
+    }
+}
+
 /// Clear venv info
 fn clear_venv_info(session_pid: u32) {
     if let Ok(restore_file) = get_venv_restore_file(session_pid) {
@@ -238,6 +343,10 @@ fn clear_venv_info(session_pid: u32) {
     if let Ok(env_keys_file) = get_venv_env_keys_file(session_pid) {
         let _ = fs::remove_file(env_keys_file);
     }
+    if let Ok(exit_commands_file) = get_venv_exit_commands_file(session_pid) {
+        let _ = fs::remove_file(exit_commands_file);
+    }
+    clear_pyenv_deactivate_flag(session_pid);
 }
 
 /// Expand environment variables and command substitutions in a value
@@ -475,6 +584,92 @@ fn process_env_operations(operations: &[crate::path_file::EnvOperation]) -> Vec<
     changes
 }
 
+/// Process extra directives and return (`env_changes`, `needs_pyenv_deactivate`)
+fn process_extra_directives(
+    directives: &[crate::path_file::ExtraDirective],
+) -> (Vec<EnvChange>, bool, Vec<String>) {
+    use crate::path_file::ExtraDirective;
+    use crate::shell_detect::{detect_current_shell, Shell};
+
+    let mut env_changes = Vec::new();
+    let mut needs_pyenv_deactivate = false;
+    let mut exit_commands = Vec::new();
+
+    for directive in directives {
+        match directive {
+            ExtraDirective::Source { script, on_exit } => {
+                let expanded_path = expand_shell_vars(script);
+                if Path::new(&expanded_path).exists() {
+                    env_changes.push(EnvChange::Source(expanded_path));
+                    if let Some(cmd) = on_exit {
+                        exit_commands.push(cmd.clone());
+                    }
+                } else {
+                    eprintln!("Warning: $source script not found: {expanded_path}");
+                    eprintln!("         Skipping script; whi environment still activated.");
+                }
+            }
+            ExtraDirective::PyEnv(venv_dir) => {
+                let expanded_dir = expand_shell_vars(venv_dir);
+
+                // Detect shell to choose correct activate script
+                let shell = detect_current_shell().unwrap_or(Shell::Bash);
+                let activate_name = match shell {
+                    Shell::Fish => "activate.fish",
+                    _ => "activate",
+                };
+
+                // Smart path resolution: handle both .venv and .venv/bin
+                let activate_script = if expanded_dir.ends_with("/bin") {
+                    // User provided .venv/bin, use directly
+                    format!("{expanded_dir}/{activate_name}")
+                } else {
+                    // User provided .venv, append /bin
+                    format!("{expanded_dir}/bin/{activate_name}")
+                };
+
+                // Check if activate script exists
+                let mut added = false;
+                if Path::new(&activate_script).exists() {
+                    env_changes.push(EnvChange::Source(activate_script));
+                    added = true;
+                } else {
+                    // Try alternative if first attempt failed
+                    let alternative = if expanded_dir.ends_with("/bin") {
+                        // They gave us /bin, try without it
+                        let base = expanded_dir.trim_end_matches("/bin");
+                        format!("{base}/bin/{activate_name}")
+                    } else {
+                        // They gave us base, try with /bin added
+                        format!("{expanded_dir}/{activate_name}")
+                    };
+
+                    if Path::new(&alternative).exists() {
+                        env_changes.push(EnvChange::Source(alternative));
+                        added = true;
+                    } else {
+                        eprintln!(
+                            "Warning: Python venv activate script not found for $pyenv {venv_dir}"
+                        );
+                        eprintln!("         Tried: {activate_script}");
+                        eprintln!("         Also tried: {alternative}");
+                        eprintln!("         Expected structure: <venv>/bin/{activate_name}");
+                        eprintln!(
+                            "         Skipping $pyenv activation; whi environment still initialized."
+                        );
+                    }
+                }
+
+                if added {
+                    needs_pyenv_deactivate = true;
+                }
+            }
+        }
+    }
+
+    (env_changes, needs_pyenv_deactivate, exit_commands)
+}
+
 pub fn source_from_path(dir_path: &str) -> io::Result<VenvTransition> {
     use crate::path_file::{apply_path_sections, parse_path_file};
 
@@ -545,7 +740,8 @@ pub fn source_from_path(dir_path: &str) -> io::Result<VenvTransition> {
 
     // Handle environment variables - preserve operation order
     let mut env_changes = vec![
-        EnvChange::Set("WHI_VENV_NAME".to_string(), venv_name),
+        EnvChange::Set("VIRTUAL_ENV_PROMPT".to_string(), venv_name),
+        EnvChange::Set("VIRTUAL_ENV".to_string(), dir.display().to_string()),
         EnvChange::Set("WHI_VENV_DIR".to_string(), dir.display().to_string()),
     ];
 
@@ -557,7 +753,7 @@ pub fn source_from_path(dir_path: &str) -> io::Result<VenvTransition> {
         .iter()
         .filter_map(|change| match change {
             EnvChange::Set(key, _) => Some(key.clone()),
-            EnvChange::Unset(_) => None,
+            EnvChange::Unset(_) | EnvChange::Source(_) | EnvChange::Run(_) => None,
         })
         .collect();
 
@@ -568,6 +764,22 @@ pub fn source_from_path(dir_path: &str) -> io::Result<VenvTransition> {
     // Append user env changes to maintain order
     env_changes.extend(user_env_changes);
 
+    // Process extra directives (sourcing scripts, python venvs)
+    let (extra_changes, needs_pyenv_deactivate, exit_commands) =
+        process_extra_directives(&parsed.extra.directives);
+    env_changes.extend(extra_changes);
+
+    save_venv_exit_commands(session_pid, &exit_commands)?;
+
+    // Save pyenv deactivation flag if needed
+    if needs_pyenv_deactivate {
+        save_pyenv_deactivate_flag(session_pid)?;
+        env_changes.push(EnvChange::Set(
+            "WHI_PYENV_MANAGED".to_string(),
+            "1".to_string(),
+        ));
+    }
+
     // Reset venv history with computed PATH (isolated from global history)
     HistoryContext::venv(session_pid, dir)
         .and_then(|ctx| ctx.reset_with_initial(&guarded_path))
@@ -576,6 +788,7 @@ pub fn source_from_path(dir_path: &str) -> io::Result<VenvTransition> {
     Ok(VenvTransition {
         new_path: guarded_path,
         env_changes,
+        needs_pyenv_deactivate,
     })
 }
 
@@ -597,23 +810,35 @@ pub fn exit_venv() -> io::Result<VenvTransition> {
     // Load env var keys that were set by the venv
     let env_keys = load_venv_env_keys(session_pid).unwrap_or_default();
 
+    // Load scripted exit commands (best effort)
+    let exit_commands = load_venv_exit_commands(session_pid);
+
+    // Check if pyenv needs deactivation
+    let needs_pyenv_deactivate = load_pyenv_deactivate_flag(session_pid);
+
     // Clear venv info
     clear_venv_info(session_pid);
 
-    // Build env_changes: unset venv vars + user env vars
-    let mut env_changes = vec![
-        EnvChange::Unset("WHI_VENV_NAME".to_string()),
-        EnvChange::Unset("WHI_VENV_DIR".to_string()),
-    ];
+    // Build env_changes: run scripted exits first, then unset whi vars + user vars
+    let mut env_changes: Vec<EnvChange> = exit_commands.into_iter().map(EnvChange::Run).collect();
+
+    env_changes.push(EnvChange::Unset("VIRTUAL_ENV_PROMPT".to_string()));
+    env_changes.push(EnvChange::Unset("VIRTUAL_ENV".to_string()));
+    env_changes.push(EnvChange::Unset("WHI_VENV_DIR".to_string()));
 
     // Add user env vars to unset
     for key in env_keys {
         env_changes.push(EnvChange::Unset(key));
     }
 
+    if needs_pyenv_deactivate {
+        env_changes.push(EnvChange::Unset("WHI_PYENV_MANAGED".to_string()));
+    }
+
     Ok(VenvTransition {
         new_path: restored_path,
         env_changes,
+        needs_pyenv_deactivate,
     })
 }
 
@@ -631,6 +856,7 @@ pub fn update_restore_path(new_path: &str) -> io::Result<()> {
 mod tests {
     use super::*;
     use std::env;
+    use std::path::Path;
     use std::sync::MutexGuard;
     use tempfile::TempDir;
 
@@ -672,7 +898,7 @@ mod tests {
         let xdg_before = env::var("XDG_RUNTIME_DIR").ok();
 
         env::set_var("XDG_RUNTIME_DIR", temp_dir.path());
-        env::set_var("WHI_VENV_NAME", "test-venv");
+        env::set_var("VIRTUAL_ENV_PROMPT", "test-venv");
         env::set_var("WHI_SESSION_PID", "4242");
 
         save_venv_restore(4242, "/old:path").unwrap();
@@ -680,8 +906,42 @@ mod tests {
         let restored = restore_venv_path(4242).unwrap();
         assert_eq!(restored, "/new:path");
 
-        env::remove_var("WHI_VENV_NAME");
+        env::remove_var("VIRTUAL_ENV_PROMPT");
         env::remove_var("WHI_SESSION_PID");
+        if let Some(val) = xdg_before {
+            env::set_var("XDG_RUNTIME_DIR", val);
+        } else {
+            env::remove_var("XDG_RUNTIME_DIR");
+        }
+    }
+
+    #[test]
+    fn test_current_venv_dir_prefers_env_then_file() {
+        let _guard = env_guard();
+        let temp_dir = TempDir::new().unwrap();
+        let xdg_before = env::var("XDG_RUNTIME_DIR").ok();
+        let session_pid = 1312u32;
+
+        env::set_var("XDG_RUNTIME_DIR", temp_dir.path());
+        env::set_var("WHI_SESSION_PID", session_pid.to_string());
+        env::set_var("VIRTUAL_ENV_PROMPT", "test-venv");
+
+        env::set_var("WHI_VENV_DIR", "/tmp/from-env");
+        let from_env = current_venv_dir();
+        assert_eq!(from_env.as_deref(), Some(Path::new("/tmp/from-env")));
+
+        env::remove_var("WHI_VENV_DIR");
+        assert!(current_venv_dir().is_none());
+
+        save_venv_info(session_pid, Path::new("/tmp/from-file")).unwrap();
+        let from_file = current_venv_dir();
+        assert_eq!(from_file.as_deref(), Some(Path::new("/tmp/from-file")));
+
+        clear_venv_info(session_pid);
+
+        env::remove_var("WHI_SESSION_PID");
+        env::remove_var("VIRTUAL_ENV_PROMPT");
+        env::remove_var("WHI_VENV_DIR");
         if let Some(val) = xdg_before {
             env::set_var("XDG_RUNTIME_DIR", val);
         } else {
@@ -699,15 +959,15 @@ mod tests {
         env::set_current_dir(temp_dir.path()).unwrap();
         env::set_var("WHI_SESSION_PID", "7777");
         env::set_var("PATH", "/usr/bin:/bin");
-        env::remove_var("WHI_VENV_NAME");
+        env::remove_var("VIRTUAL_ENV_PROMPT");
 
         fs::write(WHI_FILE, "PATH!\n/usr/bin\n/bin\n\nENV!\n").unwrap();
 
         let transition = source_from_path(temp_dir.path().to_str().unwrap()).unwrap();
         assert_eq!(transition.new_path, "/usr/bin:/bin");
 
-        env::remove_var("WHI_VENV_NAME");
-        env::remove_var("WHI_VENV_DIR");
+        env::remove_var("VIRTUAL_ENV_PROMPT");
+        env::remove_var("VIRTUAL_ENV");
         env::remove_var("WHI_SESSION_PID");
         env::remove_var("PATH");
 
@@ -792,7 +1052,7 @@ mod tests {
         env::set_var("PATH", "/usr/bin:/bin");
         env::set_var("TEST_EXPANSION", "expanded_value");
         env::set_var("USER", "testuser");
-        env::remove_var("WHI_VENV_NAME");
+        env::remove_var("VIRTUAL_ENV_PROMPT");
 
         let whifile_content = "PATH!\n/usr/bin\n/bin\n/Users/$USER/.local/bin\n\nENV!\nRUST_LOG debug\nMY_VAR hello world\nEXPANDED $TEST_EXPANSION\n";
         fs::write(WHI_FILE, whifile_content).unwrap();
@@ -805,8 +1065,8 @@ mod tests {
             "/usr/bin:/bin:/Users/testuser/.local/bin"
         );
 
-        // Check that env vars are in env_changes (after WHI_VENV_NAME and WHI_VENV_DIR)
-        assert!(transition.env_changes.len() >= 5);
+        // Check that env vars are in env_changes (after venv bookkeeping vars)
+        assert!(transition.env_changes.len() >= 6);
         assert!(transition.env_changes.iter().any(|change| matches!(
             change,
             EnvChange::Set(k, v) if k == "RUST_LOG" && v == "debug"
@@ -821,10 +1081,19 @@ mod tests {
             change,
             EnvChange::Set(k, v) if k == "EXPANDED" && v == "expanded_value"
         )));
+        assert!(transition.env_changes.iter().any(|change| matches!(
+            change,
+            EnvChange::Set(k, v)
+                if k == "WHI_VENV_DIR"
+                    && *v == temp_dir
+                        .path()
+                        .to_string_lossy()
+                        .to_string()
+        )));
 
         // Set venv vars so exit_venv() knows we're in a venv
-        env::set_var("WHI_VENV_NAME", "test");
-        env::set_var("WHI_VENV_DIR", temp_dir.path().to_str().unwrap());
+        env::set_var("VIRTUAL_ENV_PROMPT", "test");
+        env::set_var("VIRTUAL_ENV", temp_dir.path().to_str().unwrap());
 
         // Clean up for exit test
         let exit_transition = exit_venv().unwrap();
@@ -845,18 +1114,70 @@ mod tests {
         assert!(exit_transition
             .env_changes
             .iter()
-            .any(|change| matches!(change, EnvChange::Unset(k) if k == "WHI_VENV_NAME")));
+            .any(|change| matches!(change, EnvChange::Unset(k) if k == "VIRTUAL_ENV_PROMPT")));
+        assert!(exit_transition
+            .env_changes
+            .iter()
+            .any(|change| matches!(change, EnvChange::Unset(k) if k == "VIRTUAL_ENV")));
         assert!(exit_transition
             .env_changes
             .iter()
             .any(|change| matches!(change, EnvChange::Unset(k) if k == "WHI_VENV_DIR")));
 
-        env::remove_var("WHI_VENV_NAME");
-        env::remove_var("WHI_VENV_DIR");
+        env::remove_var("VIRTUAL_ENV_PROMPT");
+        env::remove_var("VIRTUAL_ENV");
         env::remove_var("WHI_SESSION_PID");
         env::remove_var("PATH");
         env::remove_var("TEST_EXPANSION");
         env::remove_var("USER");
+
+        if let Some(val) = xdg_before {
+            env::set_var("XDG_RUNTIME_DIR", val);
+        } else {
+            env::remove_var("XDG_RUNTIME_DIR");
+        }
+    }
+
+    #[test]
+    fn test_source_exit_command_runs_before_unsets() {
+        let _guard = env_guard();
+        let temp_dir = TempDir::new().unwrap();
+        let xdg_before = env::var("XDG_RUNTIME_DIR").ok();
+
+        env::set_var("XDG_RUNTIME_DIR", temp_dir.path());
+        env::set_current_dir(temp_dir.path()).unwrap();
+        env::set_var("WHI_SESSION_PID", "5555");
+        env::set_var("PATH", "/usr/bin:/bin");
+        env::remove_var("VIRTUAL_ENV_PROMPT");
+
+        let script_path = temp_dir.path().join("activate-extra.sh");
+        fs::write(&script_path, "# test script\n").unwrap();
+        let script_path_str = script_path.to_string_lossy().to_string();
+
+        let whifile_content = format!(
+            "!path.replace\n/usr/bin\n\n!whi.extra\n$source {} cleanup_extra\n",
+            script_path.display()
+        );
+        fs::write(WHI_FILE, whifile_content).unwrap();
+
+        let transition = source_from_path(temp_dir.path().to_str().unwrap()).unwrap();
+        assert!(transition
+            .env_changes
+            .iter()
+            .any(|change| matches!(change, EnvChange::Source(path) if path == &script_path_str)));
+
+        env::set_var("VIRTUAL_ENV_PROMPT", "test");
+        env::set_var("VIRTUAL_ENV", temp_dir.path().to_str().unwrap());
+
+        let exit_transition = exit_venv().unwrap();
+        assert!(
+            matches!(exit_transition.env_changes.first(), Some(EnvChange::Run(cmd)) if cmd == "cleanup_extra")
+        );
+
+        env::remove_var("VIRTUAL_ENV_PROMPT");
+        env::remove_var("VIRTUAL_ENV");
+        env::remove_var("WHI_SESSION_PID");
+        env::remove_var("PATH");
 
         if let Some(val) = xdg_before {
             env::set_var("XDG_RUNTIME_DIR", val);
@@ -878,6 +1199,8 @@ mod tests {
         env::set_var("__WHI_BIN", "/usr/local/bin/whi");
         env::set_var("PATH", "/usr/bin:/bin");
         env::set_var("SAFE_TO_UNSET", "value");
+        env::remove_var("VIRTUAL_ENV_PROMPT");
+        env::remove_var("WHI_VENV_DIR");
 
         // Test 1: env.replace should NOT unset protected vars
         let whi_file = temp_dir.path().join("whifile");
@@ -924,7 +1247,8 @@ SAFE_VAR safe_value
         );
 
         // Clean up for test 2
-        env::remove_var("WHI_VENV_NAME");
+        env::remove_var("VIRTUAL_ENV_PROMPT");
+        env::remove_var("VIRTUAL_ENV");
         env::remove_var("WHI_VENV_DIR");
 
         // Test 2: explicit env.unset SHOULD be able to unset protected vars
@@ -959,7 +1283,9 @@ SAFE_TO_UNSET
         env::remove_var("WHI_SESSION_PID");
         env::remove_var("WHI_SHELL_INITIALIZED");
         env::remove_var("__WHI_BIN");
-        env::remove_var("WHI_VENV_NAME");
+        env::remove_var("VIRTUAL_ENV_PROMPT");
+        env::remove_var("VIRTUAL_ENV");
+        env::remove_var("WHI_VENV_DIR");
         env::remove_var("WHI_VENV_DIR");
         env::remove_var("SAFE_TO_UNSET");
 
@@ -981,6 +1307,8 @@ SAFE_TO_UNSET
         env::set_var("WHI_SESSION_PID", "11111");
         env::set_var("PATH", "/usr/bin:/bin");
         env::set_var("EXISTING_VAR", "initial_value");
+        env::remove_var("VIRTUAL_ENV_PROMPT");
+        env::remove_var("WHI_VENV_DIR");
 
         // Test 1: Unset followed by Set for same key should result in Set (var exists)
         let whi_file = temp_dir.path().join("whifile");
@@ -1018,8 +1346,8 @@ TEST_VAR final_value
         );
 
         // Clean up for test 2
-        env::remove_var("WHI_VENV_NAME");
-        env::remove_var("WHI_VENV_DIR");
+        env::remove_var("VIRTUAL_ENV_PROMPT");
+        env::remove_var("VIRTUAL_ENV");
 
         // Test 2: Set before Replace should result in Replace (simulated env state matters)
         let content2 = r#"!path.replace
@@ -1067,8 +1395,8 @@ FINAL_VAR final_value
         );
 
         // Clean up for test 3
-        env::remove_var("WHI_VENV_NAME");
-        env::remove_var("WHI_VENV_DIR");
+        env::remove_var("VIRTUAL_ENV_PROMPT");
+        env::remove_var("VIRTUAL_ENV");
 
         // Test 3: Complex ordering with multiple operations on same var
         let content3 = r#"!path.replace
@@ -1096,6 +1424,7 @@ FOO value3
             .iter()
             .filter(|change| match change {
                 EnvChange::Set(k, _) | EnvChange::Unset(k) => k == "FOO",
+                EnvChange::Source(_) | EnvChange::Run(_) => false,
             })
             .collect();
 
@@ -1121,8 +1450,8 @@ FOO value3
 
         // Clean up
         env::remove_var("WHI_SESSION_PID");
-        env::remove_var("WHI_VENV_NAME");
-        env::remove_var("WHI_VENV_DIR");
+        env::remove_var("VIRTUAL_ENV_PROMPT");
+        env::remove_var("VIRTUAL_ENV");
         env::remove_var("EXISTING_VAR");
 
         if let Some(val) = xdg_before {

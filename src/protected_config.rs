@@ -218,9 +218,9 @@ fn default_protected_vars() -> Vec<String> {
         "WHI_SHELL_INITIALIZED".to_string(),
         "WHI_SESSION_PID".to_string(),
         "__WHI_BIN".to_string(),
-        // Whi venv state (protected when in venv)
-        "WHI_VENV_NAME".to_string(),
-        "WHI_VENV_DIR".to_string(),
+        // Whi venv state (protected when in venv) - uses virtualenv's standard vars
+        "VIRTUAL_ENV_PROMPT".to_string(),
+        "VIRTUAL_ENV".to_string(),
     ]
 }
 

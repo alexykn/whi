@@ -5,12 +5,14 @@
 #   Protected paths are included by default to prevent system breakage
 #
 !path.replace
+/opt/homebrew/bin
+/opt/homebrew/sbin
 /usr/local/bin
+/usr/local/sbin
 /usr/bin
 /bin
 /usr/sbin
 /sbin
-/Users/$USER/.cargo/bin
 
 # !path.prepend - Add paths to beginning of session PATH
 #   (can be combined with !path.append)
@@ -24,26 +26,39 @@
 # !path.append
 # /another/path
 
-# ENV directives:
+
+# ENV directives (IMPORTANT: executed in the order they appear!)
 #
 # !env.set - Set environment variables
-#   (can be combined with !env.unset)
 #
 !env.set
-TEST_VAR1 $(pwd)
-TEST_VAR2 $HOME
-TEST_VAR3 TEST
+TEST_VAR1 $HOME
+TEST_VAR2 $(pwd)
+TEST_VAR3 Servus
 
 # !env.unset - Unset environment variables
-#   (can be combined with !env.set)
 #
 # !env.unset
 # VAR_TO_REMOVE
 
 # !env.replace - Replace entire environment
-#   (exclusive: cannot be used with !env.set or !env.unset)
-#   WARNING: Unsets all non-protected env vars not listed below
+#   Unsets ALL non-protected vars, then sets only the ones listed below
 #
 # !env.replace
 # KEY value
 # KEY2 value2
+
+
+# EXTRA directives (stuff I think might be cool for automation):
+#
+# !whi.extra - runs after PATH/ENV
+#   $source /path/script [exit-cmd]  # optional exit command runs on 'whi exit'
+#   $pyenv /path/to/venv             # activate py-venv, leave with 'whi exit'
+#
+# !whi.extra
+# $pyenv ~/.venvs/myproject
+# $source ~/my-custom-setup.sh [optional_command_to_run_on_exit]
+#
+# NOTE: you can auto source and exit whifiles on cd by setting
+# auto_activate_file = true and auto_deactivate_file = true in
+# ~/.whi/config.toml

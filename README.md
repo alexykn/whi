@@ -179,10 +179,11 @@ whi exit                     # deactivate and restore PATH
 You can enable auto-activation in `~/.whi/config.toml`:
 ```toml
 [venv]
-auto_activate_file = true  # automatically source whifile when entering directories
+auto_activate_file = true   # automatically source whifile when entering directories
+auto_deactivate_file = true # automatically run whi exit (and extra exit hooks) when leaving
 ```
 
-When enabled, the shell integration will automatically activate venvs when you `cd` into directories containing `whifile`.
+When enabled, the shell integration will automatically activate venvs when you `cd` into directories containing `whifile` and automatically run `whi exit` (including `$source … <exit_command>` hooks and `$pyenv` deactivation) when you leave.
 
 > **Known Issue:** Auto-activation currently does not work in Zsh. Bash and Fish work correctly. For Zsh users, please manually run `whi source` when entering directories with a `whifile`. This will be fixed in a future release.
 
@@ -242,14 +243,30 @@ MY_VAR hello world
 - Comments start with `#`
 - Variables are set when entering venv, unset when exiting
 
+**Extra directives (optional):**
+- `!whi.extra` - Source scripts or activate Python virtual environments
+- Executed AFTER `!path` and `!env` sections to prevent interference
+- Two directive types:
+  - `$source /path/to/script` – Source any shell script (user's responsibility for shell compatibility). Append an optional exit command to run during `whi exit`: `$source /path/to/script cleanup_command --flag`. The exit command runs before Whi unsets venv variables so you can undo whatever the script configured.
+  - `$pyenv /path/to/venv` – Activate Python venv (auto-detects shell and sources activate/activate.fish). Whi keeps a guard around the virtualenv so calling `deactivate` directly prints `environment managed by whi...`; use `whi exit` (or auto-deactivate) so Whi can restore history and PATH correctly. Regular `$source` directives do **not** install this guard.
+- Supports shell variable expansion: `$VAR`, `${VAR}`, `~`, `$(command)`
+- Python venv example: `$pyenv $(pwd)/.venv` or `$pyenv .venv` (both work)
+- On `whi exit`, runs `deactivate` for Python venvs automatically and executes any `$source … <exit_command>` hooks you defined
+- With `[venv] auto_activate_file`/`auto_deactivate_file` enabled in `config.toml`, the shell integration automatically applies `$pyenv`/`$source` directives (and their exit commands) when you `cd` into or out of a whifile directory.
+
+Example:
+```
+!whi.extra
+$pyenv $(pwd)/.venv
+$source ~/.config/project-setup.sh
+```
+
 **Legacy format support:**
 Files with `PATH!` and `ENV!` sections (pre-0.6.0) are automatically converted to `!path.replace` and `!env.set` for backward compatibility.
 
 ### Shell prompt behaviour
 
-- bash & zsh: whi prepends "[name]" to your existing prompt.
-- fish: the marker appears in the right-hand prompt, and any prior `fish_right_prompt` output still runs before it.
-- Prompt frameworks (Starship, powerlevel10k, etc.) keep their formatting. Adjust your prompt or redefine `__whi_prompt` if you want a different placement.
+Whi uses virtualenv's standard environment variables (`VIRTUAL_ENV` and `VIRTUAL_ENV_PROMPT`) for venv indication. Modern prompt frameworks (Starship, oh-my-posh, Tide, powerlevel10k, etc.) automatically detect these variables and display the venv indicator in their own style - no manual configuration needed!
 
 `whi --help` shows the verbs (`prefer`, `add`, `move`, `switch`, `clean`, `delete`, `undo`, `redo`, `reset`, `diff`, `apply`, `save`, `load`, `list`, `rmp`, `file`, `source`, `exit`, `var`, `shorthands`). The integration intercepts those public names and rewrites them to the hidden `__…` subcommands that actually mutate the environment.
 
@@ -295,7 +312,7 @@ Use whichever spelling you prefer—both routes converge in Rust.
 
 - **Undo cursor** lives in `${XDG_RUNTIME_DIR:-/tmp}/whi-<uid>/session_<ppid>.cursor` (or `session_<ppid>/<venv-dir-hash>.cursor` when in a venv). Tracks your position in the snapshot history. No cursor file means you're at the latest state.
 
-- **Venv state** (when active) is stored in `${XDG_RUNTIME_DIR:-/tmp}/whi-<uid>/session_<ppid>/venv_restore` (PATH to restore on exit) and `venv_dir` (venv directory path). This is session-specific - each terminal has independent venv state.
+- **Venv state** (when active) is stored in `${XDG_RUNTIME_DIR:-/tmp}/whi-<uid>/session_<ppid>/venv_restore` (PATH to restore on exit), `venv_dir` (venv directory path), and `venv_exit_commands` (any `$source … <exit_command>` hooks). This is session-specific - each terminal has independent venv state.
 
 ## How undo/redo works
 
@@ -325,3 +342,8 @@ $ whi reset                 # back to snapshot 0, cursor cleared
 ## License
 
 MIT License. See [LICENSE](LICENSE) for details.
+
+## Acknowledgments
+
+- Prompt integration approach inspired by [virtualenv](https://github.com/pypa/virtualenv). Thanks to the virtualenv team for their battle-tested solution using `VIRTUAL_ENV` and `VIRTUAL_ENV_PROMPT` environment variables that works seamlessly with modern prompt frameworks (Starship, oh-my-posh, Tide, etc.).
+- The "whifile" name was inspired by [just](https://github.com/casey/just)'s "justfile" naming convention.
