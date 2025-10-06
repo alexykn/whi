@@ -186,7 +186,7 @@ Additional verbs such as `apply`, `save`, `list`, `remove-profile`, `file`, and 
 - `whi source` in a configured shell triggers the `whi()` shell function. After basic validation it calls `__whi_venv_source "$PWD"`.
 - `__whi_venv_source` executes `whi __venv_source <path>` which enters `Command::HiddenVenvSource` and calls `run_hidden_venv_source()`.
 - `run_hidden_venv_source()` delegates to `whi::venv_manager::source_from_path()`, producing a `VenvTransition` object.
-- The Rust helper prints the transition lines. The shell function reads them and exports the new `PATH`, `WHI_VENV_*` markers, etc. The user’s shell session now reflects the venv.
+- The Rust helper prints the transition lines. The shell function reads them and exports the new `PATH`, `VIRTUAL_ENV`, `VIRTUAL_ENV_PROMPT`, etc. The user's shell session now reflects the venv.
 - If the integration were missing, the public `whi source` arm would stop at `check_shell_integration()` and exit with code `2`, so no misleading “success” occurs.
 
 The same pattern applies to `whi exit` and every other mutating verb: public variants exist largely for UX/help output, while the hidden variants (plus the tab-delimited transition protocol) do the actual environment mutation once the integration is active.
