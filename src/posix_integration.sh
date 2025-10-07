@@ -1,4 +1,4 @@
-# whi shell integration for bash/zsh (v0.6.3)
+# whi shell integration for bash/zsh (v0.6.4)
 
 # Absolute path to the whi binary is injected by `whi init`
 __WHI_BIN="__WHI_BIN__"
@@ -87,6 +87,56 @@ __whi_refresh_auto_config() {
     __WHI_AUTO_CONFIG_LOADED=1
 }
 
+__whi_install_deactivate_guard() {
+    if [ "${_WHI_PYENV_GUARD_INSTALLED:-}" = "1" ]; then
+        return
+    fi
+
+    if ! command -v deactivate >/dev/null 2>&1; then
+        return
+    fi
+
+    # Save original deactivate function
+    if [ -n "$BASH_VERSION" ]; then
+        eval "$(declare -f deactivate | sed '1s/deactivate/__whi_original_deactivate/')"
+    elif [ -n "$ZSH_VERSION" ]; then
+        functions[__whi_original_deactivate]="${functions[deactivate]}"
+    fi
+
+    # Replace with guarded version
+    deactivate() {
+        if [ -n "${WHI_ALLOW_DEACTIVATE:-}" ]; then
+            __whi_original_deactivate "$@"
+        else
+            echo "environment managed by whi, please use 'whi exit' to leave" >&2
+            return 1
+        fi
+    }
+
+    _WHI_PYENV_GUARD_INSTALLED=1
+}
+
+__whi_remove_deactivate_guard() {
+    if [ "${_WHI_PYENV_GUARD_INSTALLED:-}" != "1" ]; then
+        return
+    fi
+
+    if command -v __whi_original_deactivate >/dev/null 2>&1; then
+        # Restore original deactivate
+        if [ -n "$BASH_VERSION" ]; then
+            eval "$(declare -f __whi_original_deactivate | sed '1s/__whi_original_deactivate/deactivate/')"
+        elif [ -n "$ZSH_VERSION" ]; then
+            functions[deactivate]="${functions[__whi_original_deactivate]}"
+        fi
+        unset -f __whi_original_deactivate
+    else
+        # No original, remove deactivate entirely
+        unset -f deactivate 2>/dev/null || true
+    fi
+
+    unset _WHI_PYENV_GUARD_INSTALLED
+}
+
 __whi_apply_transition() {
     local output
     if ! output="$(__whi_exec "$@")"; then
@@ -95,6 +145,8 @@ __whi_apply_transition() {
 
     local tab=$'\t'
     local processed=0
+    local install_guard=0
+    local remove_guard=0
     local line rest var value
 
     while IFS= read -r line; do
@@ -113,6 +165,9 @@ __whi_apply_transition() {
                 fi
                 if [ -n "$var" ]; then
                     export "$var=$value"
+                    if [ "$var" = "WHI_PYENV_MANAGED" ]; then
+                        install_guard=1
+                    fi
                 fi
                 processed=1
                 ;;
@@ -120,6 +175,9 @@ __whi_apply_transition() {
                 var=${line#UNSET$tab}
                 if [ -n "$var" ]; then
                     unset "$var"
+                    if [ "$var" = "WHI_PYENV_MANAGED" ]; then
+                        remove_guard=1
+                    fi
                 fi
                 processed=1
                 ;;
@@ -143,7 +201,15 @@ __whi_apply_transition() {
                 ;;
             DEACTIVATE_PYENV)
                 if command -v deactivate >/dev/null 2>&1; then
+                    # Temporarily allow deactivation
+                    local prev_allow="${WHI_ALLOW_DEACTIVATE-}"
+                    WHI_ALLOW_DEACTIVATE=1
                     deactivate
+                    if [ -n "$prev_allow" ]; then
+                        WHI_ALLOW_DEACTIVATE="$prev_allow"
+                    else
+                        unset WHI_ALLOW_DEACTIVATE
+                    fi
                 fi
                 processed=1
                 ;;
@@ -154,6 +220,14 @@ EOF
 
     if [ $processed -eq 0 ] && [ -n "$output" ]; then
         __whi_apply_transition_legacy "$output"
+    fi
+
+    # Install or remove deactivate guard
+    if [ $install_guard -eq 1 ]; then
+        __whi_install_deactivate_guard
+    fi
+    if [ $remove_guard -eq 1 ]; then
+        __whi_remove_deactivate_guard
     fi
 
     return 0
@@ -703,10 +777,23 @@ if [ -n "$BASH_VERSION" ]; then
         __whi_add_prompt_command __whi_prompt_command
     fi
 elif [ -n "$ZSH_VERSION" ]; then
+    if [ -z "${__WHI_ZSH_CD_INSTALLED:-}" ]; then
+        __WHI_ZSH_CD_INSTALLED=1
+        autoload -Uz add-zsh-hook 2>/dev/null || true
+
+        # Register (append) then move to front so failures in other hooks can't block us
+        if ! (( ${chpwd_functions[(Ie)__whi_cd_hook]} )); then
+            add-zsh-hook chpwd __whi_cd_hook 2>/dev/null || chpwd_functions+=(__whi_cd_hook)
+        fi
+        # Prepend ours (keeping order of others)
+        chpwd_functions=( __whi_cd_hook ${chpwd_functions:#__whi_cd_hook} )
+    fi
+
     if [ -z "${__WHI_ZSH_PROMPT_INSTALLED:-}" ]; then
         __WHI_ZSH_PROMPT_INSTALLED=1
         setopt prompt_subst 2>/dev/null
-        autoload -Uz add-zsh-hook 2>/dev/null
+        autoload -Uz add-zsh-hook 2>/dev/null || true
+
         __whi_precmd_prompt() {
             local last_status=$?
             typeset -g WHI_PROMPT_PREFIX
@@ -728,12 +815,24 @@ elif [ -n "$ZSH_VERSION" ]; then
             typeset -g __WHI_ZSH_LAST_PROMPT="$PROMPT"
             return $last_status
         }
-        if typeset -f add-zsh-hook >/dev/null 2>&1; then
-            add-zsh-hook precmd __whi_precmd_prompt 2>/dev/null || case " ${precmd_functions[*]:-} " in *" __whi_precmd_prompt "*) ;; *) precmd_functions+=(__whi_precmd_prompt) ;; esac
-        else
-            typeset -ga precmd_functions 2>/dev/null
-            case " ${precmd_functions[*]:-} " in *" __whi_precmd_prompt "*) ;; *) precmd_functions+=(__whi_precmd_prompt) ;; esac
+
+        # Lightweight fallback: if some tool changed $PWD without firing chpwd, call our hook
+        __whi_precmd_cd_guard() {
+            local cur="${PWD:-}"
+            if [[ "${__WHI_LAST_PWD-}" != "$cur" ]]; then
+                __whi_cd_hook   # idempotent: it exits fast if nothing to do
+            fi
+            return 0    # Always return 0 to avoid blocking subsequent hooks
+        }
+
+        # Register once
+        if ! (( ${precmd_functions[(Ie)__whi_precmd_prompt]} )); then
+            add-zsh-hook precmd __whi_precmd_prompt 2>/dev/null || precmd_functions+=(__whi_precmd_prompt)
         fi
+        if ! (( ${precmd_functions[(Ie)__whi_precmd_cd_guard]} )); then
+            add-zsh-hook precmd __whi_precmd_cd_guard 2>/dev/null || precmd_functions+=(__whi_precmd_cd_guard)
+        fi
+
         __whi_precmd_prompt
     fi
 fi
@@ -783,7 +882,7 @@ __whi_cd_hook() {
         esac
     fi
 
-    if [ -z "$VIRTUAL_ENV_PROMPT" ] && [ "${__WHI_AUTO_FILE:-0}" -eq 1 ] && [ $has_file -eq 1 ]; then
+    if [ -z "${VIRTUAL_ENV-}" ] && [ "${__WHI_AUTO_FILE:-0}" -eq 1 ] && [ $has_file -eq 1 ]; then
         if [ $pwd_changed -eq 1 ] || [ $file_changed -eq 1 ]; then
             __whi_venv_source "$current_pwd" 2>/dev/null
         fi
@@ -791,24 +890,15 @@ __whi_cd_hook() {
 
     __WHI_LAST_PWD="$current_pwd"
     __WHI_LAST_HAS_FILE=$has_file
+    return 0    # Always return 0 to avoid blocking subsequent hooks
 }
 
-# Hook cd to check for venv auto-activation
+# Hook cd to check for venv auto-activation (bash only - zsh uses chpwd hook above)
 if [ -n "$BASH_VERSION" ]; then
     __whi_cd() {
         builtin cd "$@" && __whi_cd_hook
     }
     alias cd='__whi_cd'
-elif [ -n "$ZSH_VERSION" ]; then
-    typeset -ga chpwd_functions 2>/dev/null
-    case " ${chpwd_functions[*]:-} " in
-        *" __whi_cd_hook "*)
-            # Already registered
-            ;;
-        *)
-            chpwd_functions+=(__whi_cd_hook)
-            ;;
-    esac
 fi
 
 if [ -z "$WHI_SHELL_INITIALIZED" ]; then

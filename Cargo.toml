@@ -1,6 +1,6 @@
 [package]
 name = "whi"
-version = "0.6.3"
+version = "0.6.4"
 edition = "2021"
 authors = ["Alexander Knott <alexander.knott@posteo.de>"]
 description = "Stupid simple PATH management"
