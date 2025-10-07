@@ -1,4 +1,4 @@
-# whi shell integration for bash/zsh (v0.6.4)
+# whi shell integration for bash/zsh (v0.6.5)
 
 # Absolute path to the whi binary is injected by `whi init`
 __WHI_BIN="__WHI_BIN__"
@@ -709,6 +709,11 @@ whi() {
 }
 
 __whi_prompt() {
+    if [ "${VIRTUAL_ENV_DISABLE_PROMPT-}" != "1" ] && [ -n "${_OLD_VIRTUAL_PS1+set}" ]; then
+        # Venv was sourced manually and is already managing PS1 – avoid duplicating the prefix.
+        return
+    fi
+
     local prompt="${VIRTUAL_ENV_PROMPT-}"
     if [ -n "$prompt" ]; then
         # Check if VIRTUAL_ENV_PROMPT is already formatted with parens (from Python venv)

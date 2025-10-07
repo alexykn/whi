@@ -1,4 +1,4 @@
-# whi shell integration for fish (v0.6.4)
+# whi shell integration for fish (v0.6.5)
 
 # Absolute path to the whi binary is injected by `whi init`
 set -gx __WHI_BIN "__WHI_BIN__"
@@ -533,13 +533,15 @@ function __whi_cd_hook --on-variable PWD
     set -l has_file 0
     test -f "$PWD/whifile"; and set has_file 1
 
-    # If already in a venv, check if we left that directory
-    if test -n "$VIRTUAL_ENV" -a "$__WHI_AUTO_DEACTIVATE" -eq 1
-        set -l root (string trim --right --chars='/' -- "$VIRTUAL_ENV")
-        if not string match -q "$root" -- "$PWD"
-            if not string match -q "$root/*" -- "$PWD"
-                # Left venv directory tree, deactivate
-                __whi_venv_exit_fn 2>/dev/null
+    # If already in a whi-managed venv, check if we left that directory
+    if set -q WHI_VENV_DIR
+        if test -n "$WHI_VENV_DIR" -a "$__WHI_AUTO_DEACTIVATE" -eq 1
+            set -l root (string trim --right --chars='/' -- "$WHI_VENV_DIR")
+            if not string match -q "$root" -- "$PWD"
+                if not string match -q "$root/*" -- "$PWD"
+                    # Left whi venv directory tree, deactivate
+                    __whi_venv_exit_fn 2>/dev/null
+                end
             end
         end
     end
@@ -697,6 +699,11 @@ function __whi_prompt
         if test "$VIRTUAL_ENV_DISABLE_PROMPT" = "1"
             return
         end
+    end
+
+    if set -q _OLD_FISH_PROMPT_OVERRIDE
+        # Virtualenv activate.fish already wrapped the prompt, so avoid double prefixes.
+        return
     end
 
     set -l prompt ''
