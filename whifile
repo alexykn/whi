@@ -7,12 +7,14 @@
 !path.replace
 /opt/homebrew/bin
 /opt/homebrew/sbin
+/opt/pm/live/bin
 /usr/local/bin
 /usr/local/sbin
 /usr/bin
 /bin
 /usr/sbin
 /sbin
+/test/path
 
 # !path.prepend - Add paths to beginning of session PATH
 #   (can be combined with !path.append)
