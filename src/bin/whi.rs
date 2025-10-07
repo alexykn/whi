@@ -1127,6 +1127,9 @@ fn print_venv_transition(transition: &whi::venv_manager::VenvTransition) {
             EnvChange::Run(command) => {
                 println!("RUN\t{command}");
             }
+            EnvChange::PyEnv(venv_dir) => {
+                println!("PYENV\t{venv_dir}");
+            }
         }
     }
 }

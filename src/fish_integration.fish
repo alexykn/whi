@@ -1,4 +1,4 @@
-# whi shell integration for fish (v0.6.5)
+# whi shell integration for fish (v0.6.6)
 
 # Absolute path to the whi binary is injected by `whi init`
 set -gx __WHI_BIN "__WHI_BIN__"
@@ -161,8 +161,11 @@ function __whi_apply_transition
         set -l parts (string split \t -- $line)
         switch $parts[1]
             case DEACTIVATE_PYENV
-                # Deactivate Python venv if function exists
-                if type -q deactivate
+                # Try our custom deactivate function first
+                if type -q deactivate_pyenv
+                    deactivate_pyenv
+                else if type -q deactivate
+                    # Fall back to standard deactivate (for existing venvs)
                     set -l prev_allow ""
                     set -l had_prev 0
                     if set -q WHI_ALLOW_DEACTIVATE
@@ -213,11 +216,82 @@ function __whi_apply_transition
                 end
             case SOURCE
                 if test (count $parts) -ge 2 -a -f "$parts[2]"
-                    # Clean up _old_fish_prompt to allow venv activate.fish to work
-                    if functions -q _old_fish_prompt
-                        functions -e _old_fish_prompt
-                    end
+                    # Source the script
                     source "$parts[2]"
+
+                    # Note: VIRTUAL_ENV_PROMPT is already set by whi source, script might override it
+                    # which is fine - but we don't need to do anything here
+                end
+            case PYENV
+                if test (count $parts) -ge 2
+                    set -l venv_dir "$parts[2]"
+
+                    # Resolve to absolute path if needed
+                    if not string match -q "/*" "$venv_dir"
+                        set venv_dir (pwd)/"$venv_dir"
+                    end
+
+                    # Normalize path (remove trailing slashes, handle .venv vs .venv/bin)
+                    set venv_dir (string trim --right --chars=/ "$venv_dir")
+                    if test (basename "$venv_dir") = "bin"
+                        set venv_dir (dirname "$venv_dir")
+                    end
+
+                    # Verify venv structure
+                    if not test -d "$venv_dir"
+                        echo "Error: Venv directory does not exist: $venv_dir" >&2
+                    else if not test -d "$venv_dir/bin"
+                        echo "Error: Not a valid Python venv (missing bin/): $venv_dir" >&2
+                    else if not test -f "$venv_dir/bin/python" -o -L "$venv_dir/bin/python"
+                        echo "Error: Not a valid Python venv (missing bin/python): $venv_dir" >&2
+                    else
+                        # Store old environment for restoration
+                        set -gx _WHI_OLD_VIRTUAL_PATH $PATH
+
+                        if set -q PYTHONHOME
+                            set -gx _WHI_OLD_VIRTUAL_PYTHONHOME $PYTHONHOME
+                            set -e PYTHONHOME
+                        end
+
+                        # Store old venv if one was active
+                        if set -q VIRTUAL_ENV
+                            set -gx _WHI_OLD_VIRTUAL_ENV $VIRTUAL_ENV
+                        end
+
+                        # Set new environment
+                        set -gx VIRTUAL_ENV "$venv_dir"
+                        set -gx PATH "$venv_dir/bin" $PATH
+
+                        # Note: VIRTUAL_ENV_PROMPT is already set by whi source, don't override it
+
+                        # Define deactivate function
+                        function deactivate_pyenv -d "Exit Python virtual environment"
+                            # Restore old PATH
+                            if set -q _WHI_OLD_VIRTUAL_PATH
+                                set -gx PATH $_WHI_OLD_VIRTUAL_PATH
+                                set -e _WHI_OLD_VIRTUAL_PATH
+                            end
+
+                            # Restore PYTHONHOME if it was set
+                            if set -q _WHI_OLD_VIRTUAL_PYTHONHOME
+                                set -gx PYTHONHOME $_WHI_OLD_VIRTUAL_PYTHONHOME
+                                set -e _WHI_OLD_VIRTUAL_PYTHONHOME
+                            end
+
+                            # Restore old venv if there was one
+                            if set -q _WHI_OLD_VIRTUAL_ENV
+                                set -gx VIRTUAL_ENV $_WHI_OLD_VIRTUAL_ENV
+                                set -e _WHI_OLD_VIRTUAL_ENV
+                            else
+                                set -e VIRTUAL_ENV
+                            end
+
+                            # Note: Don't unset VIRTUAL_ENV_PROMPT - it belongs to whi source, not pyenv
+
+                            # Remove this function
+                            functions -e deactivate_pyenv
+                        end
+                    end
                 end
         end
     end
@@ -692,31 +766,8 @@ function whi
     __whi_run $argv
 end
 
-# Prompt integration matches virtualenv by overriding fish_prompt while a whi venv is active.
-
-function __whi_prompt
-    if set -q VIRTUAL_ENV_DISABLE_PROMPT
-        if test "$VIRTUAL_ENV_DISABLE_PROMPT" = "1"
-            return
-        end
-    end
-
-    if set -q _OLD_FISH_PROMPT_OVERRIDE
-        # Virtualenv activate.fish already wrapped the prompt, so avoid double prefixes.
-        return
-    end
-
-    set -l prompt ''
-    if set -q VIRTUAL_ENV_PROMPT
-        set prompt "$VIRTUAL_ENV_PROMPT"
-    else if set -q VIRTUAL_ENV
-        set prompt (basename -- "$VIRTUAL_ENV")
-    end
-
-    if test -n "$prompt"
-        printf '(%s) ' "$prompt"
-    end
-end
+# Prompt integration - adapted from virtualenv's activate.fish (MIT License)
+# Copyright (c) 2020-202x The virtualenv developers
 
 function __whi_install_prompt
     if set -q __WHI_FISH_PROMPT_OVERRIDE
@@ -724,52 +775,43 @@ function __whi_install_prompt
     end
 
     if set -q VIRTUAL_ENV_DISABLE_PROMPT
-        if test "$VIRTUAL_ENV_DISABLE_PROMPT" = "1"
+        if test -n "$VIRTUAL_ENV_DISABLE_PROMPT"
             return
         end
     end
 
-    if functions -q _old_fish_prompt
-        if not functions -q __whi_saved_old_fish_prompt
-            functions -c _old_fish_prompt __whi_saved_old_fish_prompt
-        end
-    end
-
+    # Copy the current `fish_prompt` function as `_old_fish_prompt`
     if functions -q fish_prompt
-        if not functions -q __whi_original_fish_prompt
-            functions -c fish_prompt __whi_original_fish_prompt
-        end
+        functions -c fish_prompt _old_fish_prompt
     end
 
     function fish_prompt
-        set -l last_status $status
-        set -l prefix (__whi_prompt)
-        set -l prompt ''
+        # Run the user's prompt first; it might depend on (pipe)status
+        set -l prompt (_old_fish_prompt)
+        set -l prompt_str (string join \n $prompt)
 
-        if functions -q __whi_original_fish_prompt
-            if not functions -q _old_fish_prompt
-                if functions -q __whi_saved_old_fish_prompt
-                    functions -c __whi_saved_old_fish_prompt _old_fish_prompt
-                end
-            end
-            set prompt (__whi_original_fish_prompt 2>/dev/null)
-            if test $status -ne 0
-                set prompt ''
-            end
+        # Many prompts (e.g. starship) start with a leading newline. Trim it so our
+        # prefix stays on the same line instead of occupying a blank line above.
+        set -l trimmed (string replace -r '^\n+' '' -- $prompt_str)
+
+        if set -q VIRTUAL_ENV_PROMPT
+            printf '(%s) ' $VIRTUAL_ENV_PROMPT
         end
 
-        if test -n "$prefix"
-            printf '%s' "$prefix"
-        end
-
-        if test -n "$prompt"
-            string join -- \n $prompt
-        end
-
-        return $last_status
+        printf '%s' $trimmed
     end
 
-    set -g __WHI_FISH_PROMPT_OVERRIDE 1
+    set -gx __WHI_FISH_PROMPT_OVERRIDE 1
+    # Set _OLD_FISH_PROMPT_OVERRIDE to signal to Starship/other tools that prompt is wrapped
+    if set -q VIRTUAL_ENV
+        set -gx _OLD_FISH_PROMPT_OVERRIDE "$VIRTUAL_ENV"
+    else if set -q WHI_VENV_DIR
+        set -gx _OLD_FISH_PROMPT_OVERRIDE "$WHI_VENV_DIR"
+    else if set -q VIRTUAL_ENV_PROMPT
+        set -gx _OLD_FISH_PROMPT_OVERRIDE "$VIRTUAL_ENV_PROMPT"
+    else
+        set -gx _OLD_FISH_PROMPT_OVERRIDE 1
+    end
 end
 
 function __whi_remove_prompt
@@ -777,38 +819,26 @@ function __whi_remove_prompt
         return
     end
 
-    if functions -q fish_prompt
+    # Restore the original prompt
+    if functions -q _old_fish_prompt
+        # Set an empty local `$fish_function_path` to allow removal of `fish_prompt`
+        set -l fish_function_path
         functions -e fish_prompt
-    end
-
-    if functions -q __whi_original_fish_prompt
-        functions -c __whi_original_fish_prompt fish_prompt
+        functions -c _old_fish_prompt fish_prompt
+        functions -e _old_fish_prompt
     end
 
     set -e __WHI_FISH_PROMPT_OVERRIDE
+    set -e _OLD_FISH_PROMPT_OVERRIDE
 end
 
 function __whi_update_prompt
-    if set -q VIRTUAL_ENV_DISABLE_PROMPT
-        if test "$VIRTUAL_ENV_DISABLE_PROMPT" = "1"
-            __whi_remove_prompt
-            return
-        end
-    end
-
-    if set -q VIRTUAL_ENV_PROMPT
-        if test -n "$VIRTUAL_ENV_PROMPT"
-            __whi_install_prompt
-            return
-        end
-    end
-
-    if set -q VIRTUAL_ENV
+    # Install prompt if we have a venv, remove it if we don't
+    if set -q VIRTUAL_ENV_PROMPT; and test -n "$VIRTUAL_ENV_PROMPT"
         __whi_install_prompt
-        return
+    else
+        __whi_remove_prompt
     end
-
-    __whi_remove_prompt
 end
 
 

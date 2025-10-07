@@ -23,6 +23,8 @@ pub enum EnvChange {
     Source(String),
     /// Execute a command (typically during exit)
     Run(String),
+    /// Activate a Python venv using custom whi scripts
+    PyEnv(String),
 }
 
 #[derive(Debug, Clone)]
@@ -589,7 +591,6 @@ fn process_extra_directives(
     directives: &[crate::path_file::ExtraDirective],
 ) -> (Vec<EnvChange>, bool, Vec<String>) {
     use crate::path_file::ExtraDirective;
-    use crate::shell_detect::{detect_current_shell, Shell};
 
     let mut env_changes = Vec::new();
     let mut needs_pyenv_deactivate = false;
@@ -612,55 +613,26 @@ fn process_extra_directives(
             ExtraDirective::PyEnv(venv_dir) => {
                 let expanded_dir = expand_shell_vars(venv_dir);
 
-                // Detect shell to choose correct activate script
-                let shell = detect_current_shell().unwrap_or(Shell::Bash);
-                let activate_name = match shell {
-                    Shell::Fish => "activate.fish",
-                    _ => "activate",
+                // Normalize venv directory path
+                let normalized_dir = if expanded_dir.ends_with("/bin") {
+                    expanded_dir.trim_end_matches("/bin").to_string()
+                } else {
+                    expanded_dir.clone()
                 };
 
-                // Smart path resolution: handle both .venv and .venv/bin
-                let activate_script = if expanded_dir.ends_with("/bin") {
-                    // User provided .venv/bin, use directly
-                    format!("{expanded_dir}/{activate_name}")
+                // Basic validation: check if it looks like a venv
+                let venv_path = Path::new(&normalized_dir);
+                if !venv_path.exists() {
+                    eprintln!("Warning: Python venv directory not found: {normalized_dir}");
+                    eprintln!("         Skipping $pyenv activation.");
+                } else if !venv_path.join("bin").exists() || !venv_path.join("bin/python").exists()
+                {
+                    eprintln!("Warning: Directory does not appear to be a valid Python venv: {normalized_dir}");
+                    eprintln!("         Missing bin/ or bin/python");
+                    eprintln!("         Skipping $pyenv activation.");
                 } else {
-                    // User provided .venv, append /bin
-                    format!("{expanded_dir}/bin/{activate_name}")
-                };
-
-                // Check if activate script exists
-                let mut added = false;
-                if Path::new(&activate_script).exists() {
-                    env_changes.push(EnvChange::Source(activate_script));
-                    added = true;
-                } else {
-                    // Try alternative if first attempt failed
-                    let alternative = if expanded_dir.ends_with("/bin") {
-                        // They gave us /bin, try without it
-                        let base = expanded_dir.trim_end_matches("/bin");
-                        format!("{base}/bin/{activate_name}")
-                    } else {
-                        // They gave us base, try with /bin added
-                        format!("{expanded_dir}/{activate_name}")
-                    };
-
-                    if Path::new(&alternative).exists() {
-                        env_changes.push(EnvChange::Source(alternative));
-                        added = true;
-                    } else {
-                        eprintln!(
-                            "Warning: Python venv activate script not found for $pyenv {venv_dir}"
-                        );
-                        eprintln!("         Tried: {activate_script}");
-                        eprintln!("         Also tried: {alternative}");
-                        eprintln!("         Expected structure: <venv>/bin/{activate_name}");
-                        eprintln!(
-                            "         Skipping $pyenv activation; whi environment still initialized."
-                        );
-                    }
-                }
-
-                if added {
+                    // Use our custom PyEnv activation
+                    env_changes.push(EnvChange::PyEnv(normalized_dir));
                     needs_pyenv_deactivate = true;
                 }
             }
@@ -740,7 +712,7 @@ pub fn source_from_path(dir_path: &str) -> io::Result<VenvTransition> {
 
     // Handle environment variables - preserve operation order
     let mut env_changes = vec![
-        EnvChange::Set("VIRTUAL_ENV_PROMPT".to_string(), venv_name),
+        EnvChange::Set("VIRTUAL_ENV_PROMPT".to_string(), venv_name.clone()),
         EnvChange::Set("VIRTUAL_ENV".to_string(), dir.display().to_string()),
         EnvChange::Set("WHI_VENV_DIR".to_string(), dir.display().to_string()),
     ];
@@ -753,7 +725,10 @@ pub fn source_from_path(dir_path: &str) -> io::Result<VenvTransition> {
         .iter()
         .filter_map(|change| match change {
             EnvChange::Set(key, _) => Some(key.clone()),
-            EnvChange::Unset(_) | EnvChange::Source(_) | EnvChange::Run(_) => None,
+            EnvChange::Unset(_)
+            | EnvChange::Source(_)
+            | EnvChange::Run(_)
+            | EnvChange::PyEnv(_) => None,
         })
         .collect();
 
@@ -1424,7 +1399,7 @@ FOO value3
             .iter()
             .filter(|change| match change {
                 EnvChange::Set(k, _) | EnvChange::Unset(k) => k == "FOO",
-                EnvChange::Source(_) | EnvChange::Run(_) => false,
+                EnvChange::Source(_) | EnvChange::Run(_) | EnvChange::PyEnv(_) => false,
             })
             .collect();
 

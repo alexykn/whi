@@ -1,4 +1,4 @@
-# whi shell integration for bash/zsh (v0.6.5)
+# whi shell integration for bash/zsh (v0.6.6)
 
 # Absolute path to the whi binary is injected by `whi init`
 __WHI_BIN="__WHI_BIN__"
@@ -184,9 +184,12 @@ __whi_apply_transition() {
             SOURCE"$tab"*)
                 rest=${line#SOURCE$tab}
                 if [ -n "$rest" ] && [ -f "$rest" ]; then
-                    # Disable Python venv prompt modification - whi manages prompts
-                    export VIRTUAL_ENV_DISABLE_PROMPT=1
+                    # Source the script
                     source "$rest"
+
+                    # Note: VIRTUAL_ENV_PROMPT is already set by whi source, script might override it
+                    # which is fine - but we don't need to do anything here
+
                     # Clean up if activate script created backup
                     unset _OLD_VIRTUAL_PS1 2>/dev/null || true
                 fi
@@ -199,8 +202,95 @@ __whi_apply_transition() {
                 fi
                 processed=1
                 ;;
+            PYENV"$tab"*)
+                rest=${line#PYENV$tab}
+                if [ -n "$rest" ]; then
+                    local venv_dir="$rest"
+
+                    # Resolve to absolute path if needed
+                    if [ "${venv_dir:0:1}" != "/" ]; then
+                        venv_dir="$(pwd)/$venv_dir"
+                    fi
+
+                    # Normalize path (remove trailing slashes, handle .venv vs .venv/bin)
+                    venv_dir="${venv_dir%/}"
+                    if [ "${venv_dir##*/}" = "bin" ]; then
+                        venv_dir="${venv_dir%/bin}"
+                    fi
+
+                    # Verify venv structure
+                    if [ ! -d "$venv_dir" ]; then
+                        echo "Error: Venv directory does not exist: $venv_dir" >&2
+                    elif [ ! -d "$venv_dir/bin" ]; then
+                        echo "Error: Not a valid Python venv (missing bin/): $venv_dir" >&2
+                    elif [ ! -f "$venv_dir/bin/python" ] && [ ! -L "$venv_dir/bin/python" ]; then
+                        echo "Error: Not a valid Python venv (missing bin/python): $venv_dir" >&2
+                    else
+                        # Store old environment for restoration
+                        export _WHI_OLD_VIRTUAL_PATH="${PATH}"
+                        if [ -n "${PYTHONHOME+x}" ]; then
+                            export _WHI_OLD_VIRTUAL_PYTHONHOME="${PYTHONHOME}"
+                            unset PYTHONHOME
+                        fi
+
+                        # Store old venv if one was active
+                        if [ -n "${VIRTUAL_ENV+x}" ]; then
+                            export _WHI_OLD_VIRTUAL_ENV="${VIRTUAL_ENV}"
+                        fi
+
+                        # Set new environment
+                        export VIRTUAL_ENV="$venv_dir"
+                        export PATH="$venv_dir/bin:${PATH}"
+
+                        # Note: VIRTUAL_ENV_PROMPT is already set by whi source, don't override it
+
+                        # Hash reset to ensure commands are found in new PATH
+                        if command -v hash >/dev/null 2>&1; then
+                            hash -r 2>/dev/null || true
+                        fi
+
+                        # Define deactivate function
+                        deactivate_pyenv() {
+                            # Restore old PATH
+                            if [ -n "${_WHI_OLD_VIRTUAL_PATH+x}" ]; then
+                                export PATH="${_WHI_OLD_VIRTUAL_PATH}"
+                                unset _WHI_OLD_VIRTUAL_PATH
+                            fi
+
+                            # Restore PYTHONHOME if it was set
+                            if [ -n "${_WHI_OLD_VIRTUAL_PYTHONHOME+x}" ]; then
+                                export PYTHONHOME="${_WHI_OLD_VIRTUAL_PYTHONHOME}"
+                                unset _WHI_OLD_VIRTUAL_PYTHONHOME
+                            fi
+
+                            # Restore old venv if there was one
+                            if [ -n "${_WHI_OLD_VIRTUAL_ENV+x}" ]; then
+                                export VIRTUAL_ENV="${_WHI_OLD_VIRTUAL_ENV}"
+                                unset _WHI_OLD_VIRTUAL_ENV
+                            else
+                                unset VIRTUAL_ENV
+                            fi
+
+                            # Note: Don't unset VIRTUAL_ENV_PROMPT - it belongs to whi source, not pyenv
+
+                            # Hash reset
+                            if command -v hash >/dev/null 2>&1; then
+                                hash -r 2>/dev/null || true
+                            fi
+
+                            # Remove this function
+                            unset -f deactivate_pyenv 2>/dev/null || true
+                        }
+                    fi
+                fi
+                processed=1
+                ;;
             DEACTIVATE_PYENV)
-                if command -v deactivate >/dev/null 2>&1; then
+                # Try our custom deactivate function first
+                if command -v deactivate_pyenv >/dev/null 2>&1; then
+                    deactivate_pyenv
+                elif command -v deactivate >/dev/null 2>&1; then
+                    # Fall back to standard deactivate (for existing venvs)
                     # Temporarily allow deactivation
                     local prev_allow="${WHI_ALLOW_DEACTIVATE-}"
                     WHI_ALLOW_DEACTIVATE=1
@@ -709,7 +799,11 @@ whi() {
 }
 
 __whi_prompt() {
-    if [ "${VIRTUAL_ENV_DISABLE_PROMPT-}" != "1" ] && [ -n "${_OLD_VIRTUAL_PS1+set}" ]; then
+    if [ -n "${VIRTUAL_ENV_DISABLE_PROMPT-}" ]; then
+        return
+    fi
+
+    if [ -n "${_OLD_VIRTUAL_PS1+set}" ]; then
         # Venv was sourced manually and is already managing PS1 – avoid duplicating the prefix.
         return
     fi
