@@ -10,10 +10,18 @@ pub fn history_for_current_scope() -> Result<HistoryContext, String> {
     HistoryContext::global(pid)
 }
 
+#[must_use]
+pub fn guarded_path(new_path: &str) -> String {
+    let original_path = env::var("PATH").unwrap_or_default();
+    PathGuard::default().ensure_protected_paths(&original_path, new_path.to_string())
+}
+
 pub fn write_snapshot_safe(new_path: &str, args: &Args) {
+    let guarded_path = guarded_path(new_path);
+
     match history_for_current_scope() {
         Ok(history) => {
-            if let Err(e) = history.write_snapshot(new_path)
+            if let Err(e) = history.write_snapshot(&guarded_path)
                 && !args.quiet
                 && !args.silent
             {
@@ -29,9 +37,7 @@ pub fn write_snapshot_safe(new_path: &str, args: &Args) {
 }
 
 pub fn output_path<W: Write>(out: &mut W, new_path: &str) -> i32 {
-    let original_path = env::var("PATH").unwrap_or_default();
-    let guarded_path =
-        PathGuard::default().ensure_protected_paths(&original_path, new_path.to_string());
+    let guarded_path = guarded_path(new_path);
 
     if let Err(err) = writeln!(out, "{guarded_path}") {
         eprintln!("Error: Failed to write PATH output: {err}");
@@ -58,6 +64,7 @@ pub fn emit_line<W: Write>(out: &mut W, line: &str) -> i32 {
     0
 }
 
+#[must_use]
 pub fn should_use_color(args: &Args, stdout_is_tty: bool) -> bool {
     match args.color {
         ColorWhen::Always => true,

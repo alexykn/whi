@@ -126,14 +126,14 @@ pub(super) fn run_hidden_load(opts: &HiddenLoadArgs) -> i32 {
                 .collect::<Vec<_>>()
                 .join(":");
 
+            let guarded_path =
+                PathGuard::default().ensure_protected_paths(&current_path, expanded_path);
+
             if let Ok(history) = HistoryContext::global(session_pid)
-                && let Err(err) = history.write_snapshot(&expanded_path)
+                && let Err(err) = history.write_snapshot(&guarded_path)
             {
                 eprintln!("Warning: Failed to write profile snapshot: {err}");
             }
-
-            let guarded_path =
-                PathGuard::default().ensure_protected_paths(&current_path, expanded_path);
 
             println!("{guarded_path}");
             0
@@ -230,14 +230,14 @@ pub(super) fn run_hidden_add(args: &HiddenAddArgs) -> i32 {
     }
 
     let new_path = searcher.to_path_string();
+    let guarded_path = PathGuard::default().ensure_protected_paths(&current_path, new_path);
 
     if let Ok(history) = HistoryContext::global(session_pid)
-        && let Err(err) = history.write_snapshot(&new_path)
+        && let Err(err) = history.write_snapshot(&guarded_path)
     {
         eprintln!("Warning: Failed to write PATH snapshot: {err}");
     }
 
-    let guarded_path = PathGuard::default().ensure_protected_paths(&current_path, new_path);
     println!("{guarded_path}");
     0
 }
