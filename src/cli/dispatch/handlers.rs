@@ -10,10 +10,6 @@ use super::spec::{
 };
 
 pub(super) fn run_query(opts: super::spec::QueryArgs) -> i32 {
-    if let Some(code) = check_shell_integration() {
-        return code;
-    }
-
     let args = AppArgs {
         names: opts.names,
         all: opts.listing.all,
@@ -32,21 +28,10 @@ pub(super) fn run_query(opts: super::spec::QueryArgs) -> i32 {
         ..Default::default()
     };
 
-    if args.names.is_empty() && !args.full && !args.all {
-        println!(
-            "Usage: whi [OPTIONS] [NAME]...\n       whi <COMMAND>\n\nTry 'whi --help' for more information."
-        );
-        return 0;
-    }
-
     commands::run(&args)
 }
 
 pub(super) fn run_diff(opts: DiffArgs) -> i32 {
-    if let Some(code) = check_shell_integration() {
-        return code;
-    }
-
     let full = match opts.shell {
         Some(shell) if shell.eq_ignore_ascii_case("full") => true,
         _ => opts.full,
