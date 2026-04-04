@@ -4,6 +4,23 @@ Default rules for working in this repository. These apply to all languages and c
 
 If a task explicitly asks for something else, follow the task but note the deviation.
 
+## Response Style & Token Efficiency
+
+All agents (Plan, Build, General, Explore) MUST be extremely concise. Token waste from unnecessary yapping is forbidden.
+
+### Do
+- Think step-by-step internally only.
+- Output **only** the final result, plan, code change, or tool call.
+- Use short, direct language. Eliminate filler, meta-commentary, and explanations.
+
+### Don't (never)
+- Narrate tool calls, next steps, reasoning, or "I should call X because...".
+- Write paragraphs explaining what you're about to do or why.
+- Add pleasantries, summaries of your process, or "here is my plan...".
+- Output anything the user did not explicitly ask for.
+
+When in doubt: shorter is always better. If the user wants your reasoning, they will ask.
+
 ## Subagent Usage (Plan & Build)
 
 - Primary agents for planning and implementation must use built-in subagents for efficiency and context hygiene.
