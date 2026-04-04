@@ -142,6 +142,10 @@ function whiad
     __whi_handle_add whiad $argv
 end
 
+function whin
+    __whi_run -n $argv
+end
+
 function whir
     __whi_handle_redo whir $argv
 end

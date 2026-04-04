@@ -135,6 +135,7 @@ whic() { __whi_handle_clean "whic" "$@"; }
 whid() { __whi_handle_delete "whid" "$@"; }
 whia() { __whi_exec --all "$@"; }
 whiad() { __whi_handle_add "whiad" "$@"; }
+whin() { __whi_exec -n "$@"; }
 whir() { __whi_handle_redo "whir" "$@"; }
 whiu() { __whi_handle_undo "whiu" "$@"; }
 whil() {

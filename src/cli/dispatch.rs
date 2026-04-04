@@ -782,6 +782,11 @@ const SHORTHANDS: &[Shorthand] = &[
         description: "Add paths to PATH",
     },
     Shorthand {
+        name: "whin",
+        command: "whi -n",
+        description: "Hide PATH indices",
+    },
+    Shorthand {
         name: "whiu",
         command: "whi undo",
         description: "Undo last operation",

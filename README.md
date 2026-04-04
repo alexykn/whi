@@ -85,6 +85,7 @@ whic   -> whi clean
 whid   -> whi delete
 whia   -> whi --all
 whiad  -> whi add
+whin   -> whi -n
 whiu   -> whi undo
 whir   -> whi redo
 whil   -> whi load
