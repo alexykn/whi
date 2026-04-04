@@ -6,6 +6,10 @@
       "model": "openai/gpt-5.4",
       "reasoningEffort": "medium"
     },
+    "qbuild": {
+      "model": "openai/gpt-5.4-mini",
+      "reasoningEffort": "high"
+    },
     "plan": {
       "model": "openai/gpt-5.4-mini",
       "reasoningEffort": "high"
