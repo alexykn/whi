@@ -315,11 +315,10 @@ impl PathSearcher {
         for (idx, dir) in self.dirs.iter().enumerate() {
             if matcher.matches(dir) {
                 // If executable specified, check it exists
-                if let Some(name) = executable_name {
-                    let exec_path = dir.join(name);
-                    if !exec_path.exists() {
-                        continue;
-                    }
+                if let Some(name) = executable_name
+                    && !self.has_executable(dir, name)
+                {
+                    continue;
                 }
 
                 fuzzy_results.push((idx + 1, dir)); // 1-based index
