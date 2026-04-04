@@ -55,6 +55,9 @@ pub fn run() -> i32 {
         Some(spec::Command::Diff(diff)) => handlers::run_diff(diff),
         Some(spec::Command::Apply(apply)) => handlers::run_apply(apply),
         Some(spec::Command::Help) => handlers::run_help(),
+        // Public PATH-manipulation commands are intentionally shell-facing only.
+        // The shell integration wrappers translate them into the hidden __* protocol,
+        // which is what actually mutates PATH and returns the new value to export.
         Some(
             spec::Command::Prefer
             | spec::Command::Move

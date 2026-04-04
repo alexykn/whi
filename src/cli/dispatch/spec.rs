@@ -120,6 +120,8 @@ pub(crate) enum Command {
     Add,
     /// Show all whi shorthand commands
     Shorthands,
+    // Hidden commands are the shell-integration protocol: the shell templates
+    // invoke these __* subcommands and apply the emitted PATH value themselves.
     #[command(hide = true)]
     Init(InitArgs),
     #[command(name = "__move", hide = true)]
