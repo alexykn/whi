@@ -15,6 +15,12 @@ impl Drop for EnvLock {
     }
 }
 
+/// Acquire a process-wide lock used by tests that mutate environment variables.
+///
+/// # Panics
+///
+/// Panics if the lock file cannot be created after repeated retries.
+#[must_use]
 pub fn env_lock() -> EnvLock {
     let path = env::temp_dir().join("whi-test-env.lock");
 

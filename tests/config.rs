@@ -49,7 +49,7 @@ fn shell_paths_backup_and_load_saved_path() {
     let whi_dir = home.path().join(".whi");
     let backups: Vec<_> = std::fs::read_dir(&whi_dir)
         .unwrap()
-        .filter_map(|entry| entry.ok())
+        .filter_map(std::result::Result::ok)
         .filter(|entry| entry.file_name().to_string_lossy().ends_with(".bak"))
         .collect();
     assert_eq!(backups.len(), 1);

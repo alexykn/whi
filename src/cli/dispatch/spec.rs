@@ -25,7 +25,13 @@ pub(crate) struct QueryArgs {
     pub(crate) listing: QueryListingArgs,
 
     #[command(flatten)]
+    pub(crate) listing_details: QueryListingDetailsArgs,
+
+    #[command(flatten)]
     pub(crate) output: QueryOutputArgs,
+
+    #[command(flatten)]
+    pub(crate) output_details: QueryOutputDetailsArgs,
 
     #[command(flatten)]
     pub(crate) mode: QueryModeArgs,
@@ -50,7 +56,10 @@ pub(crate) struct QueryListingArgs {
 
     #[arg(short = 'l', long = "follow-symlinks", visible_alias = "L")]
     pub(crate) follow_symlinks: bool,
+}
 
+#[derive(ClapArgs, Debug, Default)]
+pub(crate) struct QueryListingDetailsArgs {
     #[arg(short = '1', long = "one")]
     pub(crate) one: bool,
 
@@ -68,7 +77,10 @@ pub(crate) struct QueryOutputArgs {
 
     #[arg(long = "silent")]
     pub(crate) silent: bool,
+}
 
+#[derive(ClapArgs, Debug, Default)]
+pub(crate) struct QueryOutputDetailsArgs {
     #[arg(short = 's', long = "stat")]
     pub(crate) stat: bool,
 

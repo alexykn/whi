@@ -18,12 +18,12 @@ pub(super) fn run_query(opts: super::spec::QueryArgs) -> i32 {
         print0: opts.output.print0,
         quiet: opts.output.quiet,
         silent: opts.output.silent,
-        one: opts.listing.one,
-        show_nonexec: opts.listing.show_nonexec,
+        one: opts.listing_details.one,
+        show_nonexec: opts.listing_details.show_nonexec,
         path_override: opts.path_override,
         color: opts.color.unwrap_or(ColorChoice::Auto).into(),
-        stat: opts.output.stat,
-        no_index: opts.output.no_index,
+        stat: opts.output_details.stat,
+        no_index: opts.output_details.no_index,
         swap_fuzzy: opts.mode.swap_fuzzy,
         ..Default::default()
     };

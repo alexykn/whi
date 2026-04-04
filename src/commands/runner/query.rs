@@ -14,34 +14,37 @@ pub(super) use crate::commands::support::path_support::{
     output_path, should_use_color, write_snapshot_safe,
 };
 
-pub(super) fn run_query(
+fn write_directory_listing(
+    searcher: &PathSearcher,
+    args: &Args,
+    out: &mut BufWriter<StdoutLock<'_>>,
+) -> i32 {
+    let num_dirs = searcher.dirs().len();
+    if num_dirs > 999 {
+        if !args.silent {
+            eprintln!("Error: PATH has {num_dirs} entries (max 999 supported)");
+        }
+        return 3;
+    }
+
+    for (idx, dir) in searcher.dirs().iter().enumerate() {
+        if args.no_index {
+            writeln!(out, "{}", dir.display()).ok();
+        } else {
+            writeln!(out, "{:>4} {}", format!("[{}]", idx + 1), dir.display()).ok();
+        }
+    }
+    out.flush().ok();
+    0
+}
+
+fn write_query_results(
     searcher: &PathSearcher,
     args: &Args,
     config: &Config,
     out: &mut BufWriter<StdoutLock<'_>>,
+    names: Vec<String>,
 ) -> i32 {
-    let names = get_names(args);
-
-    if names.is_empty() {
-        let num_dirs = searcher.dirs().len();
-        if num_dirs > 999 {
-            if !args.silent {
-                eprintln!("Error: PATH has {num_dirs} entries (max 999 supported)");
-            }
-            return 3;
-        }
-
-        for (idx, dir) in searcher.dirs().iter().enumerate() {
-            if args.no_index {
-                writeln!(out, "{}", dir.display()).ok();
-            } else {
-                writeln!(out, "{:>4} {}", format!("[{}]", idx + 1), dir.display()).ok();
-            }
-        }
-        out.flush().ok();
-        return 0;
-    }
-
     let mut all_found = true;
     let stderr = io::stderr();
     let mut err = BufWriter::new(stderr.lock());
@@ -164,6 +167,20 @@ pub(super) fn run_query(
     err.flush().ok();
 
     i32::from(!all_found)
+}
+
+pub(super) fn run_query(
+    searcher: &PathSearcher,
+    args: &Args,
+    config: &Config,
+    out: &mut BufWriter<StdoutLock<'_>>,
+) -> i32 {
+    let names = get_names(args);
+    if names.is_empty() {
+        return write_directory_listing(searcher, args, out);
+    }
+
+    write_query_results(searcher, args, config, out, names)
 }
 
 pub(super) fn get_names(args: &Args) -> Vec<String> {

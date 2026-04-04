@@ -8,6 +8,7 @@ mod handlers;
 mod internal;
 mod spec;
 
+#[must_use]
 pub fn run() -> i32 {
     let cli_result = spec::Cli::try_parse();
 
