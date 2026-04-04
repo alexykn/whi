@@ -68,7 +68,9 @@ impl PathSearcher {
             .collect();
 
         if has_empty {
-            eprintln!("Warning: Empty PATH component(s) detected and skipped. Empty components can be a security risk.");
+            eprintln!(
+                "Warning: Empty PATH component(s) detected and skipped. Empty components can be a security risk."
+            );
         }
 
         let canon_dirs = std::cell::RefCell::new(vec![None; dirs.len()]);

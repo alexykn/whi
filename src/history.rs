@@ -1,5 +1,4 @@
 use std::fs;
-use std::hash::{Hash, Hasher};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -18,36 +17,16 @@ pub struct HistoryFiles {
     pub cursor_file: PathBuf,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HistoryScope {
-    Global,
-    Venv,
-}
-
 #[derive(Debug, Clone)]
 pub struct HistoryContext {
     files: HistoryFiles,
-    scope: HistoryScope,
 }
 
 impl HistoryContext {
     pub fn global(pid: u32) -> Result<Self, String> {
         Ok(Self {
             files: global_history_files(pid)?,
-            scope: HistoryScope::Global,
         })
-    }
-
-    pub fn venv(pid: u32, venv_dir: &Path) -> Result<Self, String> {
-        Ok(Self {
-            files: venv_history_files(pid, venv_dir)?,
-            scope: HistoryScope::Venv,
-        })
-    }
-
-    #[must_use]
-    pub fn scope(&self) -> HistoryScope {
-        self.scope
     }
 
     pub fn write_snapshot(&self, path: &str) -> Result<(), String> {
@@ -107,31 +86,6 @@ fn global_history_files(pid: u32) -> Result<HistoryFiles, String> {
     Ok(HistoryFiles {
         history_file,
         cursor_file,
-    })
-}
-
-fn venv_history_files(pid: u32, venv_dir: &Path) -> Result<HistoryFiles, String> {
-    let history_file = session_tracker::get_session_file(pid)?;
-    let session_dir = history_file
-        .parent()
-        .ok_or_else(|| "Failed to determine session directory".to_string())?
-        .to_path_buf();
-
-    let session_bucket = session_dir.join(format!("session_{pid}"));
-    create_dir_if_missing(&session_bucket)?;
-
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    venv_dir.to_string_lossy().hash(&mut hasher);
-    let hash = hasher.finish();
-
-    let venv_bucket = session_bucket
-        .join("venvs")
-        .join(format!("venv_{hash:016x}"));
-    create_dir_if_missing(&venv_bucket)?;
-
-    Ok(HistoryFiles {
-        history_file: venv_bucket.join("history.log"),
-        cursor_file: venv_bucket.join("history.cursor"),
     })
 }
 
@@ -465,22 +419,5 @@ mod tests {
 
         clear_cursor(&files).unwrap();
         assert_eq!(get_cursor(&files).unwrap(), None);
-    }
-
-    #[test]
-    fn venv_history_isolation_per_session() {
-        let _guard = HistoryTempDir::new();
-
-        let venv_path = Path::new("/tmp/example-venv");
-
-        let ctx1 = HistoryContext::venv(111, venv_path).unwrap();
-        let ctx2 = HistoryContext::venv(222, venv_path).unwrap();
-
-        ctx1.write_snapshot("/ctx1").unwrap();
-        ctx2.write_snapshot("/ctx2").unwrap();
-
-        assert_ne!(ctx1.files.history_file, ctx2.files.history_file);
-        assert_eq!(ctx1.read_snapshots().unwrap().last().unwrap(), "/ctx1");
-        assert_eq!(ctx2.read_snapshots().unwrap().last().unwrap(), "/ctx2");
     }
 }

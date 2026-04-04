@@ -256,10 +256,11 @@ mod tests {
         let diff = compute_diff(current, initial, true);
         // Should show all 3 as moved (no unchanged since all positions changed)
         assert_eq!(diff.entries.len(), 3);
-        assert!(diff
-            .entries
-            .iter()
-            .all(|e| matches!(e, DiffEntry::Moved(_))));
+        assert!(
+            diff.entries
+                .iter()
+                .all(|e| matches!(e, DiffEntry::Moved(_)))
+        );
     }
 
     #[test]
@@ -271,18 +272,21 @@ mod tests {
 
         // Should have: -/b, +/d, M/a
         // Note: /c stays at position 2 in both, so no change shown (unless full mode)
-        assert!(diff
-            .entries
-            .iter()
-            .any(|e| matches!(e, DiffEntry::Removed(p) if p == "/b")));
-        assert!(diff
-            .entries
-            .iter()
-            .any(|e| matches!(e, DiffEntry::Added(p) if p == "/d")));
-        assert!(diff
-            .entries
-            .iter()
-            .any(|e| matches!(e, DiffEntry::Moved(p) if p == "/a")));
+        assert!(
+            diff.entries
+                .iter()
+                .any(|e| matches!(e, DiffEntry::Removed(p) if p == "/b"))
+        );
+        assert!(
+            diff.entries
+                .iter()
+                .any(|e| matches!(e, DiffEntry::Added(p) if p == "/d"))
+        );
+        assert!(
+            diff.entries
+                .iter()
+                .any(|e| matches!(e, DiffEntry::Moved(p) if p == "/a"))
+        );
     }
 
     #[test]
@@ -294,10 +298,11 @@ mod tests {
         let diff = compute_diff(current, initial, false);
 
         // Should show /new as added (even though whi didn't do it!)
-        assert!(diff
-            .entries
-            .iter()
-            .any(|e| matches!(e, DiffEntry::Added(p) if p == "/new")));
+        assert!(
+            diff.entries
+                .iter()
+                .any(|e| matches!(e, DiffEntry::Added(p) if p == "/new"))
+        );
     }
 
     #[test]
@@ -309,9 +314,10 @@ mod tests {
 
         // In full mode, should show all as unchanged
         assert_eq!(diff.entries.len(), 3);
-        assert!(diff
-            .entries
-            .iter()
-            .all(|e| matches!(e, DiffEntry::Unchanged(_))));
+        assert!(
+            diff.entries
+                .iter()
+                .all(|e| matches!(e, DiffEntry::Unchanged(_)))
+        );
     }
 }

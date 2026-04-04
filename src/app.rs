@@ -5,14 +5,13 @@ use std::path::{Path, PathBuf};
 
 use crate::cli::{Args, ColorWhen};
 use crate::executor::{ExecutableCheck, SearchResult};
-use crate::history::{HistoryContext, HistoryScope};
+use crate::history::HistoryContext;
 use crate::output::OutputFormatter;
 use crate::path::PathSearcher;
 use crate::path_guard::PathGuard;
 use crate::path_resolver;
 use crate::shell_integration;
 use crate::system;
-use crate::venv_manager;
 
 /// Get the session `PID` - either from `WHI_SESSION_PID` env var or fall back to parent `PID`
 fn get_session_pid() -> Result<u32, std::io::Error> {
@@ -48,13 +47,6 @@ fn write_snapshot_safe(new_path: &str, args: &Args) {
 
 fn history_for_current_scope() -> Result<HistoryContext, String> {
     let pid = get_session_pid().map_err(|e| e.to_string())?;
-
-    if venv_manager::is_in_venv() {
-        if let Some(path) = venv_manager::current_venv_dir() {
-            return HistoryContext::venv(pid, path.as_path());
-        }
-    }
-
     HistoryContext::global(pid)
 }
 
@@ -117,7 +109,7 @@ pub fn run(args: &Args) -> i32 {
 
     // Handle apply subcommand (renamed from save)
     if let Some(shell_opt) = &args.apply_shell {
-        return handle_apply(shell_opt.as_ref(), args.no_protect, args.apply_force);
+        return handle_apply(shell_opt.as_ref(), args.no_protect);
     }
 
     // Handle save profile subcommand
@@ -216,7 +208,9 @@ pub fn run(args: &Args) -> i32 {
 
     let mut all_found = true;
     if names.is_empty() {
-        eprintln!("Usage: whi [OPTIONS] [NAME]...\n       whi <COMMAND>\n\nTry 'whi --help' for more information.");
+        eprintln!(
+            "Usage: whi [OPTIONS] [NAME]...\n       whi <COMMAND>\n\nTry 'whi --help' for more information."
+        );
         return 2;
     }
 
@@ -957,16 +951,11 @@ fn handle_delete<W: Write>(
 }
 
 #[allow(clippy::too_many_lines)]
-fn handle_apply(shell_opt: Option<&String>, no_protect: bool, force: bool) -> i32 {
+fn handle_apply(shell_opt: Option<&String>, no_protect: bool) -> i32 {
     use crate::config_manager::save_path;
     use crate::session_tracker::cleanup_old_sessions;
-    use crate::shell_detect::{detect_current_shell, Shell};
+    use crate::shell_detect::{Shell, detect_current_shell};
     use std::collections::HashSet;
-
-    if venv_manager::is_in_venv() && !force {
-        eprintln!("Error: Refusing to run 'whi apply' inside an active PATH environment. Exit the venv or re-run with '--force' (optionally with '--no-protect').");
-        return 2;
-    }
 
     let mut path_var = env::var("PATH").unwrap_or_default();
 
@@ -1043,11 +1032,7 @@ fn handle_apply(shell_opt: Option<&String>, no_protect: bool, force: bool) -> i3
                     }
                 }
 
-                if all_ok {
-                    0
-                } else {
-                    2
-                }
+                if all_ok { 0 } else { 2 }
             } else {
                 let shell = match shell_str.parse::<Shell>() {
                     Ok(s) => s,
@@ -1080,9 +1065,7 @@ fn handle_apply(shell_opt: Option<&String>, no_protect: bool, force: bool) -> i3
                     eprintln!("Warning: Failed to reinitialize history: {e}");
                 }
 
-                if history.scope() == HistoryScope::Global {
-                    let _ = cleanup_old_sessions();
-                }
+                let _ = cleanup_old_sessions();
             }
             Err(e) => {
                 eprintln!("Warning: Failed to update history: {e}");
@@ -1226,7 +1209,9 @@ fn handle_redo(count: usize) -> i32 {
         Ok(history) => match history.read_snapshots() {
             Ok(snapshots) => {
                 if snapshots.is_empty() {
-                    eprintln!("Error: No PATH history found. No operations have been performed in this session.");
+                    eprintln!(
+                        "Error: No PATH history found. No operations have been performed in this session."
+                    );
                     return 1;
                 }
 

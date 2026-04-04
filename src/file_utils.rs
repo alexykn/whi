@@ -1,6 +1,6 @@
 /// Shared utilities for parsing configuration files
 ///
-/// All whi config files (whifiles, profiles, protected files) follow these conventions:
+/// All whi config files (path files, profiles, protected files) follow these conventions:
 /// - Lines starting with `#` are comments (ignored)
 /// - Empty lines are ignored
 /// - Section headers start with `!`
@@ -110,7 +110,7 @@ mod tests {
     #[test]
     fn test_is_section_header() {
         assert!(is_section_header("!path.replace"));
-        assert!(is_section_header("!env.set"));
+        assert!(is_section_header("!path.prepend"));
         assert!(is_section_header("!protected.paths"));
         assert!(!is_section_header("/usr/bin"));
         assert!(!is_section_header("# comment"));

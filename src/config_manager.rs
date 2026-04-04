@@ -4,7 +4,7 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::atomic_file::AtomicFile;
-use crate::shell_detect::{get_config_file_path, get_saved_path_file, get_sourcing_line, Shell};
+use crate::shell_detect::{Shell, get_config_file_path, get_saved_path_file, get_sourcing_line};
 
 /// Save the current `PATH` for a shell
 pub fn save_path(shell: &Shell, path: &str) -> Result<(), String> {
@@ -39,10 +39,6 @@ pub fn save_path(shell: &Shell, path: &str) -> Result<(), String> {
         formatted.push_str(entry);
         formatted.push('\n');
     }
-
-    // Add placeholder for future env saving
-    formatted.push_str("\n# !env.saved\n");
-    formatted.push_str("# Environment variable saving not yet implemented\n");
 
     let mut atomic_file = AtomicFile::new(&saved_path_file)
         .map_err(|e| format!("Failed to create PATH file: {e}"))?;
@@ -194,55 +190,7 @@ pub fn load_profile(profile_name: &str) -> Result<crate::path_file::ParsedPathFi
     let content = fs::read_to_string(&profile_file)
         .map_err(|e| format!("Failed to read profile file: {e}"))?;
 
-    // Auto-upgrade old format (PATH!/ENV!) to new format (!path.replace/!env.set)
-    let needs_upgrade = content
-        .lines()
-        .find(|line| {
-            let trimmed = line.trim();
-            !trimmed.is_empty() && !trimmed.starts_with('#')
-        })
-        .is_some_and(|first_line| first_line.trim() == "PATH!" || first_line.trim() == "ENV!");
-
-    let parsed = parse_path_file(&content)?;
-
-    // If old format detected, convert and write back
-    if needs_upgrade {
-        use crate::atomic_file::AtomicFile;
-        use crate::path_file::format_path_file_with_env;
-
-        // Reconstruct PATH string from parsed data for formatting
-        let path_str = if let Some(ref replace) = parsed.path.replace {
-            replace.join(":")
-        } else {
-            String::new()
-        };
-
-        // Extract set operations from env operations
-        let env_vars: Vec<(String, String)> = parsed
-            .env
-            .operations
-            .iter()
-            .filter_map(|op| match op {
-                crate::path_file::EnvOperation::Set(k, v) => Some((k.clone(), v.clone())),
-                _ => None,
-            })
-            .collect();
-
-        // Format with new directives
-        let new_content = format_path_file_with_env(&path_str, &env_vars);
-
-        // Write atomically
-        let mut atomic_file = AtomicFile::new(&profile_file)
-            .map_err(|e| format!("Failed to create atomic file: {e}"))?;
-        atomic_file
-            .write_all(new_content.as_bytes())
-            .map_err(|e| format!("Failed to write profile: {e}"))?;
-        atomic_file
-            .commit()
-            .map_err(|e| format!("Failed to commit profile: {e}"))?;
-    }
-
-    Ok(parsed)
+    parse_path_file(&content)
 }
 
 pub fn delete_profile(profile_name: &str) -> Result<(), String> {
@@ -309,50 +257,7 @@ pub fn load_saved_path_for_shell(shell: &Shell) -> Result<String, String> {
     let content = fs::read_to_string(&saved_path_file)
         .map_err(|e| format!("Failed to read saved PATH file: {e}"))?;
 
-    // Auto-upgrade old format (PATH!/ENV!) to new format (!path.saved/!env.saved)
-    let needs_upgrade = content
-        .lines()
-        .find(|line| {
-            let trimmed = line.trim();
-            !trimmed.is_empty() && !trimmed.starts_with('#')
-        })
-        .is_some_and(|first_line| first_line.trim() == "PATH!" || first_line.trim() == "ENV!");
-
-    // Parse and apply PATH sections (saved_path files use !path.saved, so base_path is ignored)
     let parsed = parse_path_file(&content)?;
-
-    // If old format detected, convert and write back
-    if needs_upgrade {
-        use crate::atomic_file::AtomicFile;
-
-        // Reconstruct PATH string from parsed data
-        let path_str = if let Some(ref replace) = parsed.path.replace {
-            replace.join(":")
-        } else {
-            String::new()
-        };
-
-        // Format with !path.saved directive
-        let mut new_content = String::from("!path.saved\n");
-        for entry in path_str.split(':').filter(|s| !s.is_empty()) {
-            new_content.push_str(entry);
-            new_content.push('\n');
-        }
-
-        // Add placeholder for future env saving
-        new_content.push_str("\n# !env.saved\n");
-        new_content.push_str("# Environment variable saving not yet implemented\n");
-
-        // Write atomically
-        let mut atomic_file = AtomicFile::new(&saved_path_file)
-            .map_err(|e| format!("Failed to create atomic file: {e}"))?;
-        atomic_file
-            .write_all(new_content.as_bytes())
-            .map_err(|e| format!("Failed to write saved PATH: {e}"))?;
-        atomic_file
-            .commit()
-            .map_err(|e| format!("Failed to commit saved PATH: {e}"))?;
-    }
 
     apply_path_sections("", &parsed.path)
 }

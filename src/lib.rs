@@ -20,7 +20,6 @@ pub mod session_tracker;
 pub mod shell_detect;
 pub mod shell_integration;
 pub mod system;
-pub mod venv_manager;
 
 #[cfg(test)]
 pub(crate) mod test_utils {

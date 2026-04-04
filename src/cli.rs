@@ -47,7 +47,6 @@ pub struct Args {
     pub clean: bool,
     pub delete_targets: Vec<DeleteTarget>,
     pub apply_shell: Option<Option<String>>, // None = not used, Some(None) = current, Some(Some(x)) = specific
-    pub apply_force: bool,
     pub no_protect: bool,
     pub diff: bool,
     pub diff_full: bool,

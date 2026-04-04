@@ -1,321 +1,9 @@
-# whi shell integration for fish (v0.6.6)
+# whi shell integration for fish (path-only)
 
-# Absolute path to the whi binary is injected by `whi init`
 set -gx __WHI_BIN "__WHI_BIN__"
-set -g __WHI_CONFIG_PATH "$HOME/.whi/config.toml"
-set -g __WHI_AUTO_FILE 0
-set -g __WHI_AUTO_FILE_MTIME ""
-set -g __WHI_STAT_STYLE ""
-set -g __WHI_STAT_SKIP 0
 
 function __whi_run
     $__WHI_BIN $argv
-end
-
-function __whi_detect_stat_style
-    if test -n "$__WHI_STAT_STYLE"
-        return
-    end
-
-    set -l probe $HOME
-    if test -z "$probe"
-        set probe .
-    end
-
-    command stat -c %Y $probe > /dev/null 2>&1
-    if test $status -eq 0
-        set -g __WHI_STAT_STYLE gnu
-        return
-    end
-
-    command stat -f %m $probe > /dev/null 2>&1
-    if test $status -eq 0
-        set -g __WHI_STAT_STYLE bsd
-        return
-    end
-
-    set -g __WHI_STAT_STYLE none
-end
-
-function __whi_stat_mtime
-    set -l path $argv[1]
-
-    if test -z "$path"
-        return 0
-    end
-
-    if not test -e "$path"
-        return 0
-    end
-
-    __whi_detect_stat_style
-
-    switch $__WHI_STAT_STYLE
-        case gnu
-            set -l result (command stat -c %Y $path 2>/dev/null)
-            if test $status -eq 0 -a -n "$result"
-                echo $result
-            end
-        case bsd
-            set -l result (command stat -f %m $path 2>/dev/null)
-            if test $status -eq 0 -a -n "$result"
-                echo $result
-            end
-    end
-
-    return 0
-end
-
-function __whi_refresh_auto_config
-    set -l current_mtime ""
-
-    if test -n "$__WHI_CONFIG_PATH"
-        set -l mtime (__whi_stat_mtime $__WHI_CONFIG_PATH)
-        if test (count $mtime) -gt 0 -a -n "$mtime[1]"
-            set current_mtime $mtime[1]
-        end
-    end
-
-    if set -q __WHI_AUTO_CONFIG_LOADED
-        if test "$current_mtime" = "$__WHI_AUTO_FILE_MTIME"
-            return 0
-        end
-    end
-
-    set -l output (__whi_run __should_auto_activate 2>/dev/null)
-    set -l lines (string split '\n' -- $output)
-    set -l auto_flag 0
-    set -l deactivate_flag 0
-
-    for line in $lines
-        if string match -rq '^file=1' -- $line
-            set auto_flag 1
-        else if string match -rq '^deactivate=1' -- $line
-            set deactivate_flag 1
-        end
-    end
-
-    set -g __WHI_AUTO_FILE $auto_flag
-    set -g __WHI_AUTO_DEACTIVATE $deactivate_flag
-
-    if test -z "$current_mtime"
-        set -g __WHI_AUTO_FILE 0
-    end
-
-    set -g __WHI_AUTO_FILE_MTIME $current_mtime
-    set -g __WHI_AUTO_CONFIG_LOADED 1
-    set -g __WHI_STAT_SKIP 0
-end
-
-function __whi_install_fish_deactivate_guard
-    if test "$_WHI_PYENV_GUARD_INSTALLED" = 1
-        return
-    end
-
-    if not functions -q deactivate
-        return
-    end
-
-    if functions -q __whi_original_deactivate
-        functions -e __whi_original_deactivate
-    end
-    functions -c deactivate __whi_original_deactivate
-
-    function deactivate --argument-names argv
-        if set -q WHI_ALLOW_DEACTIVATE
-            __whi_original_deactivate $argv
-        else
-            printf '%s\n' "environment managed by whi, please use 'whi exit' to leave" >&2
-            return 1
-        end
-    end
-
-    set -g _WHI_PYENV_GUARD_INSTALLED 1
-end
-
-function __whi_remove_fish_deactivate_guard
-    if test "$_WHI_PYENV_GUARD_INSTALLED" != 1
-        return
-    end
-
-    if functions -q deactivate
-        functions -e deactivate
-    end
-    if functions -q __whi_original_deactivate
-        functions -e __whi_original_deactivate
-    end
-    set -e _WHI_PYENV_GUARD_INSTALLED
-end
-
-function __whi_apply_transition
-    set -l output (__whi_run $argv)
-    set -l exit_code $status
-    if test $exit_code -ne 0
-        return $exit_code
-    end
-
-    set -l install_guard 0
-    set -l remove_guard 0
-
-    for line in $output
-        set -l parts (string split \t -- $line)
-        switch $parts[1]
-            case DEACTIVATE_PYENV
-                # Try our custom deactivate function first
-                if type -q deactivate_pyenv
-                    deactivate_pyenv
-                else if type -q deactivate
-                    # Fall back to standard deactivate (for existing venvs)
-                    set -l prev_allow ""
-                    set -l had_prev 0
-                    if set -q WHI_ALLOW_DEACTIVATE
-                        set prev_allow $WHI_ALLOW_DEACTIVATE
-                        set had_prev 1
-                    end
-                    set -g WHI_ALLOW_DEACTIVATE 1
-                    deactivate
-                    if test $had_prev -eq 1
-                        set -g WHI_ALLOW_DEACTIVATE $prev_allow
-                    else
-                        set -e WHI_ALLOW_DEACTIVATE
-                    end
-                end
-            case PATH
-                if test (count $parts) -ge 2
-                    set -gx PATH (string split : -- $parts[2])
-                end
-            case SET
-                if test (count $parts) -ge 3
-                    set -gx $parts[2] $parts[3]
-                    if test $parts[2] = "WHI_PYENV_MANAGED"
-                        set install_guard 1
-                    end
-                end
-            case UNSET
-                if test (count $parts) -ge 2
-                    set -e $parts[2]
-                    if test $parts[2] = "WHI_PYENV_MANAGED"
-                        set remove_guard 1
-                    end
-                end
-            case RUN
-                if test (count $parts) -ge 2
-                    set -l prev_allow ""
-                    set -l had_prev 0
-                    if set -q WHI_ALLOW_DEACTIVATE
-                        set prev_allow $WHI_ALLOW_DEACTIVATE
-                        set had_prev 1
-                    end
-                    set -g WHI_ALLOW_DEACTIVATE 1
-                    eval $parts[2]
-                    if test $had_prev -eq 1
-                        set -g WHI_ALLOW_DEACTIVATE $prev_allow
-                    else
-                        set -e WHI_ALLOW_DEACTIVATE
-                    end
-                end
-            case SOURCE
-                if test (count $parts) -ge 2 -a -f "$parts[2]"
-                    # Source the script
-                    source "$parts[2]"
-
-                    # Note: VIRTUAL_ENV_PROMPT is already set by whi source, script might override it
-                    # which is fine - but we don't need to do anything here
-                end
-            case PYENV
-                if test (count $parts) -ge 2
-                    set -l venv_dir "$parts[2]"
-
-                    # Resolve to absolute path if needed
-                    if not string match -q "/*" "$venv_dir"
-                        set venv_dir (pwd)/"$venv_dir"
-                    end
-
-                    # Normalize path (remove trailing slashes, handle .venv vs .venv/bin)
-                    set venv_dir (string trim --right --chars=/ "$venv_dir")
-                    if test (basename "$venv_dir") = "bin"
-                        set venv_dir (dirname "$venv_dir")
-                    end
-
-                    # Verify venv structure
-                    if not test -d "$venv_dir"
-                        echo "Error: Venv directory does not exist: $venv_dir" >&2
-                    else if not test -d "$venv_dir/bin"
-                        echo "Error: Not a valid Python venv (missing bin/): $venv_dir" >&2
-                    else if not test -f "$venv_dir/bin/python" -o -L "$venv_dir/bin/python"
-                        echo "Error: Not a valid Python venv (missing bin/python): $venv_dir" >&2
-                    else
-                        # Store old environment for restoration
-                        set -gx _WHI_OLD_VIRTUAL_PATH $PATH
-
-                        if set -q PYTHONHOME
-                            set -gx _WHI_OLD_VIRTUAL_PYTHONHOME $PYTHONHOME
-                            set -e PYTHONHOME
-                        end
-
-                        # Store old venv if one was active
-                        if set -q VIRTUAL_ENV
-                            set -gx _WHI_OLD_VIRTUAL_ENV $VIRTUAL_ENV
-                        end
-
-                        # Set new environment
-                        set -gx VIRTUAL_ENV "$venv_dir"
-                        set -gx PATH "$venv_dir/bin" $PATH
-
-                        # Note: VIRTUAL_ENV_PROMPT is already set by whi source, don't override it
-
-                        # Define deactivate function
-                        function deactivate_pyenv -d "Exit Python virtual environment"
-                            # Restore old PATH
-                            if set -q _WHI_OLD_VIRTUAL_PATH
-                                set -gx PATH $_WHI_OLD_VIRTUAL_PATH
-                                set -e _WHI_OLD_VIRTUAL_PATH
-                            end
-
-                            # Restore PYTHONHOME if it was set
-                            if set -q _WHI_OLD_VIRTUAL_PYTHONHOME
-                                set -gx PYTHONHOME $_WHI_OLD_VIRTUAL_PYTHONHOME
-                                set -e _WHI_OLD_VIRTUAL_PYTHONHOME
-                            end
-
-                            # Restore old venv if there was one
-                            if set -q _WHI_OLD_VIRTUAL_ENV
-                                set -gx VIRTUAL_ENV $_WHI_OLD_VIRTUAL_ENV
-                                set -e _WHI_OLD_VIRTUAL_ENV
-                            else
-                                set -e VIRTUAL_ENV
-                            end
-
-                            # Note: Don't unset VIRTUAL_ENV_PROMPT - it belongs to whi source, not pyenv
-
-                            # Remove this function
-                            functions -e deactivate_pyenv
-                        end
-                    end
-                end
-        end
-    end
-
-    if test $install_guard -eq 1
-        __whi_install_fish_deactivate_guard
-    end
-
-    if test $remove_guard -eq 1
-        __whi_remove_fish_deactivate_guard
-    end
-
-    __whi_update_prompt
-
-    return 0
-end
-
-# Load saved PATH first (if it exists) using whi
-# This restores your PATH from the previous session
-if test -f ~/.whi/saved_path_fish
-    set -l new_path (__whi_run __load_saved_path fish)
-    if test -n "$new_path"
-        set -gx PATH (string split : $new_path)
-    end
 end
 
 function __whi_apply
@@ -323,132 +11,62 @@ function __whi_apply
     set -l rest $argv[2..-1]
     set -l new_path (__whi_run __$subcmd $rest)
     set -l exit_code $status
-    if test $exit_code -eq 0
-        set -gx PATH (string split : $new_path)
-    else
+    if test $exit_code -ne 0
         return $exit_code
     end
+
+    set -gx PATH (string split : -- $new_path)
 end
 
 function __whi_handle_move --argument-names display
     set -l args $argv[2..-1]
-    if test (count $args) -ge 1
-        if contains -- $args[1] help --help -h
-            echo "Usage: $display FROM TO"
-            echo "  Move PATH entry from index FROM to index TO"
-            return 0
-        end
-    end
-
     if test (count $args) -ne 2
         echo "Usage: $display FROM TO" >&2
-        echo "  Move PATH entry from index FROM to index TO" >&2
         return 2
     end
-
     __whi_apply move $args
-    return $status
 end
 
 function __whi_handle_switch --argument-names display
     set -l args $argv[2..-1]
-    if test (count $args) -ge 1
-        if contains -- $args[1] help --help -h
-            echo "Usage: $display IDX1 IDX2"
-            echo "  Swap PATH entries at indices IDX1 and IDX2"
-            return 0
-        end
-    end
-
     if test (count $args) -ne 2
         echo "Usage: $display IDX1 IDX2" >&2
-        echo "  Swap PATH entries at indices IDX1 and IDX2" >&2
         return 2
     end
-
     __whi_apply switch $args
-    return $status
 end
 
 function __whi_handle_clean --argument-names display
     set -l args $argv[2..-1]
-    if test (count $args) -ge 1
-        if contains -- $args[1] help --help -h
-            echo "Usage: $display"
-            echo "  Remove duplicate entries from PATH"
-            return 0
-        end
-    end
-
     if test (count $args) -ne 0
         echo "Usage: $display" >&2
-        echo "  Remove duplicate entries from PATH" >&2
         return 2
     end
-
     __whi_apply clean
-    return $status
 end
 
 function __whi_handle_delete --argument-names display
     set -l args $argv[2..-1]
-    if test (count $args) -ge 1
-        if contains -- $args[1] help --help -h
-            echo "Usage: $display TARGET [TARGET...]"
-            echo "  TARGET can be index, path, or fuzzy pattern"
-            echo "  Fuzzy patterns delete ALL matching entries"
-            return 0
-        end
-    end
-
     if test (count $args) -lt 1
         echo "Usage: $display TARGET [TARGET...]" >&2
-        echo "  TARGET can be index, path, or fuzzy pattern" >&2
         return 2
     end
-
     __whi_apply delete $args
-    return $status
 end
 
 function __whi_handle_add --argument-names display
     set -l args $argv[2..-1]
-    if test (count $args) -ge 1
-        if contains -- $args[1] help --help -h
-            echo "Usage: $display PATH..."
-            echo "  Add one or more paths to PATH (prepends by default)"
-            return 0
-        end
-    end
-
     if test (count $args) -lt 1
         echo "Usage: $display PATH..." >&2
         return 2
     end
-
     __whi_apply add $args
-    return $status
 end
 
 function __whi_handle_prefer --argument-names display
     set -l args $argv[2..-1]
-    if test (count $args) -ge 1
-        if contains -- $args[1] help --help -h
-            echo "Usage: $display [NAME] TARGET [PATTERN...]"
-            echo "  Add path to PATH or prefer executable at target"
-            echo "  TARGET can be index, path, or fuzzy pattern"
-            echo "Examples:"
-            printf '  %s ~/.cargo/bin           # Add path to PATH (if not present)\n' $display
-            printf '  %s cargo 3                # Use cargo from PATH index 3\n' $display
-            printf '  %s cargo ~/.cargo/bin     # Add/prefer ~/.cargo/bin for cargo\n' $display
-            printf '  %s bat github release     # Use bat from path matching pattern\n' $display
-            return 0
-        end
-    end
-
     if test (count $args) -lt 1
         echo "Usage: $display [NAME] TARGET [PATTERN...]" >&2
-        echo "  TARGET can be index, path, or fuzzy pattern" >&2
         return 2
     end
 
@@ -459,191 +77,61 @@ function __whi_handle_prefer --argument-names display
         set -l rest $args[2..-1]
         __whi_apply prefer $name $rest
     end
-    return $status
 end
 
 function __whi_handle_redo --argument-names display
     set -l args $argv[2..-1]
-    if test (count $args) -ge 1
-        if contains -- $args[1] help --help -h
-            echo "Usage: $display [COUNT]"
-            echo "  Redo next COUNT PATH operations (default: 1)"
-            return 0
-        end
+    if test (count $args) -gt 1
+        echo "Usage: $display [COUNT]" >&2
+        return 2
     end
 
     if test (count $args) -eq 0
         __whi_apply redo 1
-    else if test (count $args) -eq 1
-        __whi_apply redo $args[1]
     else
-        echo "Usage: $display [COUNT]" >&2
-        echo "  Redo next COUNT PATH operations (default: 1)" >&2
-        return 2
+        __whi_apply redo $args[1]
     end
-    return $status
 end
 
 function __whi_handle_undo --argument-names display
     set -l args $argv[2..-1]
-    if test (count $args) -ge 1
-        if contains -- $args[1] help --help -h
-            echo "Usage: $display [COUNT]"
-            echo "  Undo last COUNT PATH operations (default: 1)"
-            return 0
-        end
+    if test (count $args) -gt 1
+        echo "Usage: $display [COUNT]" >&2
+        return 2
     end
 
     if test (count $args) -eq 0
         __whi_apply undo 1
-    else if test (count $args) -eq 1
-        __whi_apply undo $args[1]
     else
-        echo "Usage: $display [COUNT]" >&2
-        echo "  Undo last COUNT PATH operations (default: 1)" >&2
-        return 2
+        __whi_apply undo $args[1]
     end
-    return $status
 end
 
-set -g __WHI_CMD_NAMES \
-    move switch clean delete add prefer redo undo \
-    whim whis whic whid whiad whir whiu whip
-set -g __WHI_CMD_HANDLERS \
-    __whi_handle_move \
-    __whi_handle_switch \
-    __whi_handle_clean \
-    __whi_handle_delete \
-    __whi_handle_add \
-    __whi_handle_prefer \
-    __whi_handle_redo \
-    __whi_handle_undo \
-    __whi_handle_move \
-    __whi_handle_switch \
-    __whi_handle_clean \
-    __whi_handle_delete \
-    __whi_handle_add \
-    __whi_handle_redo \
-    __whi_handle_undo \
-    __whi_handle_prefer
-
-function __whi_lookup_handler --argument-names cmd
-    for idx in (seq (count $__WHI_CMD_NAMES))
-        if test $__WHI_CMD_NAMES[$idx] = $cmd
-            echo $__WHI_CMD_HANDLERS[$idx]
-            return 0
-        end
-    end
-    return 1
-end
-
-function __whi_dispatch --argument-names cmd
-    set -l handler (__whi_lookup_handler $cmd)
-    if test -z "$handler"
-        return 1
-    end
-    set -l rest $argv[2..-1]
-    $handler "whi $cmd" $rest
-    return $status
-end
-
-function __whi_run_shorthand --argument-names name
-    set -l handler (__whi_lookup_handler $name)
-    if test -z "$handler"
-        return 1
-    end
-    set -l rest $argv[2..-1]
-    $handler $name $rest
-    return $status
-end
-
-function __whi_venv_source
-    set -l dir $argv[1]
-    test -z "$dir"; and set dir "."
-
-    __whi_apply_transition __venv_source "$dir"
-end
-
-function __whi_venv_exit_fn
-    __whi_apply_transition __venv_exit
-end
-
-
-function __whi_cd_hook --on-variable PWD
-    if not set -q __WHI_AUTO_CONFIG_LOADED
-        __whi_refresh_auto_config
-    end
-
-    set -l check_config 1
-    if set -q __WHI_AUTO_FILE
-        if test $__WHI_AUTO_FILE -eq 0 -a -n "$__WHI_AUTO_FILE_MTIME"
-            set -l skip $__WHI_STAT_SKIP
-            if test $skip -lt 4
-                set check_config 0
-                set -g __WHI_STAT_SKIP (math "$skip + 1")
-            else
-                set -g __WHI_STAT_SKIP 0
-            end
-        else
-            set -g __WHI_STAT_SKIP 0
-        end
-    end
-
-    if test $check_config -eq 1 -a -n "$__WHI_CONFIG_PATH"
-        set -l current_mtime (__whi_stat_mtime $__WHI_CONFIG_PATH)
-        if test (count $current_mtime) -gt 0 -a -n "$current_mtime[1]"
-            set -l current_val $current_mtime[1]
-            if test "$current_val" != "$__WHI_AUTO_FILE_MTIME"
-                __whi_refresh_auto_config
-            end
-        else if test -n "$__WHI_AUTO_FILE_MTIME"
-            set -g __WHI_AUTO_FILE 0
-            set -g __WHI_AUTO_FILE_MTIME ""
-        end
-        set -g __WHI_STAT_SKIP 0
-    end
-
-    # Check if we should auto-activate or auto-deactivate
-    set -l has_file 0
-    test -f "$PWD/whifile"; and set has_file 1
-
-    # If already in a whi-managed venv, check if we left that directory
-    if set -q WHI_VENV_DIR
-        if test -n "$WHI_VENV_DIR" -a "$__WHI_AUTO_DEACTIVATE" -eq 1
-            set -l root (string trim --right --chars='/' -- "$WHI_VENV_DIR")
-            if not string match -q "$root" -- "$PWD"
-                if not string match -q "$root/*" -- "$PWD"
-                    # Left whi venv directory tree, deactivate
-                    __whi_venv_exit_fn 2>/dev/null
-                end
-            end
-        end
-    end
-
-    # Auto-activate if configured and not already in venv
-    if test -z "$VIRTUAL_ENV_PROMPT" -a $__WHI_AUTO_FILE -eq 1 -a $has_file -eq 1
-        __whi_venv_source "$PWD"
+if test -f ~/.whi/saved_path_fish
+    set -l new_path (__whi_run __load_saved_path fish 2>/dev/null)
+    if test -n "$new_path"
+        set -gx PATH (string split : -- $new_path)
     end
 end
 
 function whim
-    __whi_run_shorthand whim $argv
+    __whi_handle_move whim $argv
 end
 
 function whis
-    __whi_run_shorthand whis $argv
+    __whi_handle_switch whis $argv
 end
 
 function whip
-    __whi_run_shorthand whip $argv
+    __whi_handle_prefer whip $argv
 end
 
 function whic
-    __whi_run_shorthand whic $argv
+    __whi_handle_clean whic $argv
 end
 
 function whid
-    __whi_run_shorthand whid $argv
+    __whi_handle_delete whid $argv
 end
 
 function whia
@@ -651,218 +139,74 @@ function whia
 end
 
 function whiad
-    __whi_run_shorthand whiad $argv
+    __whi_handle_add whiad $argv
 end
 
 function whir
-    __whi_run_shorthand whir $argv
+    __whi_handle_redo whir $argv
 end
 
 function whiu
-    __whi_run_shorthand whiu $argv
+    __whi_handle_undo whiu $argv
 end
 
-function whiv
-    if test (count $argv) -ge 1; and contains -- $argv[1] help --help -h
-        echo "Usage: whiv [-f|--full] [NAME]"
-        echo "  Query environment variables"
-        echo ""
-        echo "Options:"
-        echo "  -f, --full    List all environment variables"
-        echo ""
-        echo "Examples:"
-        echo "  whiv PATH         # Show PATH variable"
-        echo "  whiv cargo        # Fuzzy search for variables matching 'cargo'"
-        echo "  whiv -f           # List all variables"
-        return 0
+function whil
+    if test (count $argv) -ne 1
+        echo "Usage: whil NAME" >&2
+        return 2
     end
-    __whi_run var $argv
+    __whi_apply load $argv[1]
 end
 
 function whish
     __whi_run shorthands $argv
 end
 
-function whil
-    if test (count $argv) -ge 1; and contains -- $argv[1] help --help -h
-        echo "Usage: whil NAME"
-        echo "  Load saved profile NAME"
-        return 0
-    end
-    if test (count $argv) -ne 1
-        echo "Usage: whil NAME" >&2
-        return 2
-    end
-    __whi_apply_transition __load $argv[1]
-end
-
 function whi
-    if test (count $argv) -gt 0
-        set -l cmd $argv[1]
-        switch $cmd
-            case reset
-                if test (count $argv) -ge 2; and contains -- $argv[2] help --help -h
-                    echo "Usage: whi reset"
-                    echo "  Reset PATH to initial session state"
-                    return 0
-                end
-                if test (count $argv) -ne 1
-                    echo "Usage: whi reset" >&2
-                    return 2
-                end
-                __whi_apply reset
-                return $status
-            case load
-                if test (count $argv) -ge 2; and contains -- $argv[2] help --help -h
-                    echo "Usage: whi load NAME"
-                    echo "  Load saved profile NAME"
-                    return 0
-                end
-                if test (count $argv) -ne 2
-                    echo "Usage: whi load NAME" >&2
-                    return 2
-                end
-                __whi_apply_transition __load $argv[2]
-                return $status
-            case var
-                __whi_run var $argv[2..]
-                return $status
-            case shorthands
-                __whi_run shorthands $argv[2..]
-                return $status
-            case source
-                if test (count $argv) -ge 2; and contains -- $argv[2] help --help -h
-                    echo "Usage: whi source"
-                    echo "  Activate venv from whifile in current directory"
-                    return 0
-                end
-                if test (count $argv) -ne 1
-                    echo "Usage: whi source" >&2
-                    return 2
-                end
-                __whi_venv_source "$PWD"
-                return $status
-            case exit
-                if test (count $argv) -ge 2; and contains -- $argv[2] help --help -h
-                    echo "Usage: whi exit"
-                    echo "  Exit active venv and restore previous PATH"
-                    return 0
-                end
-                if test (count $argv) -ne 1
-                    echo "Usage: whi exit" >&2
-                    return 2
-                end
-                __whi_venv_exit_fn
-                return $status
-            case '*'
-                __whi_dispatch $argv
-                set -l dispatch_status $status
-                if test $dispatch_status -ne 1
-                    return $dispatch_status
-                end
-        end
+    if test (count $argv) -eq 0
+        __whi_run
+        return $status
     end
 
-    __whi_run $argv
-end
+    set -l cmd $argv[1]
+    set -l rest $argv[2..-1]
 
-# Prompt integration - adapted from virtualenv's activate.fish (MIT License)
-# Copyright (c) 2020-202x The virtualenv developers
-
-function __whi_install_prompt
-    if set -q __WHI_FISH_PROMPT_OVERRIDE
-        return
-    end
-
-    if set -q VIRTUAL_ENV_DISABLE_PROMPT
-        if test -n "$VIRTUAL_ENV_DISABLE_PROMPT"
-            return
-        end
-    end
-
-    # Copy the current `fish_prompt` function as `_old_fish_prompt`
-    if functions -q fish_prompt
-        functions -c fish_prompt _old_fish_prompt
-    end
-
-    function fish_prompt
-        # Run the user's prompt first; it might depend on (pipe)status
-        set -l prompt (_old_fish_prompt)
-        set -l prompt_str (string join \n $prompt)
-
-        # Many prompts (e.g. starship) start with a leading newline. Trim it so our
-        # prefix stays on the same line instead of occupying a blank line above.
-        set -l trimmed (string replace -r '^\n+' '' -- $prompt_str)
-
-        if set -q VIRTUAL_ENV_PROMPT
-            printf '(%s) ' $VIRTUAL_ENV_PROMPT
-        end
-
-        printf '%s' $trimmed
-    end
-
-    set -gx __WHI_FISH_PROMPT_OVERRIDE 1
-    # Set _OLD_FISH_PROMPT_OVERRIDE to signal to Starship/other tools that prompt is wrapped
-    if set -q VIRTUAL_ENV
-        set -gx _OLD_FISH_PROMPT_OVERRIDE "$VIRTUAL_ENV"
-    else if set -q WHI_VENV_DIR
-        set -gx _OLD_FISH_PROMPT_OVERRIDE "$WHI_VENV_DIR"
-    else if set -q VIRTUAL_ENV_PROMPT
-        set -gx _OLD_FISH_PROMPT_OVERRIDE "$VIRTUAL_ENV_PROMPT"
-    else
-        set -gx _OLD_FISH_PROMPT_OVERRIDE 1
+    switch $cmd
+        case reset
+            if test (count $rest) -ne 0
+                echo "Usage: whi reset" >&2
+                return 2
+            end
+            __whi_apply reset
+        case undo
+            __whi_handle_undo "whi undo" $rest
+        case redo
+            __whi_handle_redo "whi redo" $rest
+        case load
+            if test (count $rest) -ne 1
+                echo "Usage: whi load NAME" >&2
+                return 2
+            end
+            __whi_apply load $rest[1]
+        case add
+            __whi_handle_add "whi add" $rest
+        case prefer
+            __whi_handle_prefer "whi prefer" $rest
+        case move
+            __whi_handle_move "whi move" $rest
+        case switch
+            __whi_handle_switch "whi switch" $rest
+        case clean
+            __whi_handle_clean "whi clean" $rest
+        case delete
+            __whi_handle_delete "whi delete" $rest
+        case '*'
+            __whi_run $argv
     end
 end
 
-function __whi_remove_prompt
-    if not set -q __WHI_FISH_PROMPT_OVERRIDE
-        return
-    end
-
-    # Restore the original prompt
-    if functions -q _old_fish_prompt
-        # Set an empty local `$fish_function_path` to allow removal of `fish_prompt`
-        set -l fish_function_path
-        functions -e fish_prompt
-        functions -c _old_fish_prompt fish_prompt
-        functions -e _old_fish_prompt
-    end
-
-    set -e __WHI_FISH_PROMPT_OVERRIDE
-    set -e _OLD_FISH_PROMPT_OVERRIDE
-end
-
-function __whi_update_prompt
-    # Install prompt if we have a venv, remove it if we don't
-    if set -q VIRTUAL_ENV_PROMPT; and test -n "$VIRTUAL_ENV_PROMPT"
-        __whi_install_prompt
-    else
-        __whi_remove_prompt
-    end
-end
-
-
-if not set -q WHI_SHELL_INITIALIZED
-    set -gx WHI_SHELL_INITIALIZED 1
+set -gx WHI_SHELL_INITIALIZED 1
+if not set -q WHI_SESSION_PID
     set -gx WHI_SESSION_PID %self
-    __whi_run __init "$WHI_SESSION_PID"
 end
-
-# Trigger auto-activation for the current directory (if configured)
-if functions -q __whi_cd_hook
-    __whi_cd_hook >/dev/null
-end
-
-__whi_update_prompt
-
-# IMPORTANT: Add this to the END of your fish config (~/.config/fish/config.fish):
-#   whi init fish | source
-# This must be at the END so whi captures your final PATH after all modifications.
-# Also remove any old "# whi: Load saved PATH" sections from your config -
-# saved PATH loading is now included at the top of this integration script.
-# Or run in the current shell:
-#   whi init fish | source
-
-# Prompt integration: whi automatically adds "[name]" or "[name:locked]" to the right prompt.
-# Customize by editing __whi_prompt or overriding fish_right_prompt after sourcing if
-# you prefer a different placement.
+__whi_run __init $WHI_SESSION_PID >/dev/null 2>&1
