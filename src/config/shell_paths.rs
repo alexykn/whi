@@ -3,8 +3,8 @@ use std::io::Write;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::atomic_file::AtomicFile;
-use crate::shell_detect::{Shell, get_config_file_path, get_saved_path_file, get_sourcing_line};
+use crate::io::atomic_file::AtomicFile;
+use crate::shell::detect::{get_config_file_path, get_saved_path_file, get_sourcing_line, Shell};
 
 /// Save the current `PATH` for a shell
 pub fn save_path(shell: &Shell, path: &str) -> Result<(), String> {
@@ -135,7 +135,7 @@ fn get_profiles_dir() -> Result<std::path::PathBuf, String> {
 }
 
 pub fn save_profile(profile_name: &str, path: &str) -> Result<(), String> {
-    use crate::path_file::format_path_file;
+    use crate::path::file::format_path_file;
 
     if profile_name.is_empty() {
         return Err("Profile name cannot be empty".to_string());
@@ -167,8 +167,8 @@ pub fn save_profile(profile_name: &str, path: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn load_profile(profile_name: &str) -> Result<crate::path_file::ParsedPathFile, String> {
-    use crate::path_file::parse_path_file;
+pub fn load_profile(profile_name: &str) -> Result<crate::path::file::ParsedPathFile, String> {
+    use crate::path::file::parse_path_file;
 
     if profile_name.is_empty() {
         return Err("Profile name cannot be empty".to_string());
@@ -246,7 +246,7 @@ pub fn list_profiles() -> Result<Vec<String>, String> {
 
 /// Load saved `PATH` for a shell (used by shell integration on startup)
 pub fn load_saved_path_for_shell(shell: &Shell) -> Result<String, String> {
-    use crate::path_file::{apply_path_sections, parse_path_file};
+    use crate::path::file::{apply_path_sections, parse_path_file};
 
     let saved_path_file = get_saved_path_file(shell)?;
 

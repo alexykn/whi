@@ -3,15 +3,21 @@ use std::fs;
 use std::io::{self, BufRead, BufWriter, StdoutLock, Write};
 use std::path::{Path, PathBuf};
 
-use crate::cli::{Args, ColorWhen};
-use crate::executor::{ExecutableCheck, SearchResult};
-use crate::history::HistoryContext;
-use crate::output::OutputFormatter;
-use crate::path::PathSearcher;
-use crate::path_guard::PathGuard;
-use crate::path_resolver;
-use crate::shell_integration;
-use crate::system;
+use crate::cli::args::{Args, ColorWhen};
+use crate::config::{protected_paths, shell_paths};
+use crate::io::output::OutputFormatter;
+use crate::path::diff::{compute_diff, format_diff_with_limit};
+use crate::path::file::apply_path_sections;
+use crate::path::fuzzy::FuzzyMatcher;
+use crate::path::guard::PathGuard;
+use crate::path::resolve::{looks_like_exact_path, resolve_path};
+use crate::path::searcher::PathSearcher;
+use crate::search::result::{ExecutableCheck, SearchResult};
+use crate::session::history::HistoryContext;
+use crate::session::store::cleanup_old_sessions;
+use crate::shell::detect::{detect_current_shell, Shell};
+use crate::shell::init as shell_init;
+use crate::{config, platform};
 
 /// Get the session `PID` - either from `WHI_SESSION_PID` env var or fall back to parent `PID`
 fn get_session_pid() -> Result<u32, std::io::Error> {
@@ -23,7 +29,7 @@ fn get_session_pid() -> Result<u32, std::io::Error> {
             )
         })
     } else {
-        system::get_parent_pid()
+        platform::get_parent_pid()
     }
 }
 
@@ -85,17 +91,17 @@ fn handle_path_result(
 #[allow(clippy::too_many_lines)]
 #[must_use]
 pub fn run(args: &Args) -> i32 {
-    if let Err(e) = crate::config::ensure_config_exists() {
+    if let Err(e) = config::runtime::ensure_config_exists() {
         eprintln!("Error: {e}");
         return 2;
     }
 
     // Load config for fuzzy search settings
-    let config = crate::config::load_config().unwrap_or_default();
+    let config = config::runtime::load_config().unwrap_or_default();
 
     // Handle init subcommand
     if let Some(ref shell) = args.init_shell {
-        match shell_integration::generate_init_script(shell) {
+        match shell_init::generate_init_script(shell) {
             Ok(script) => {
                 print!("{script}");
                 return 0;
@@ -450,7 +456,6 @@ fn check_dir_entry(entry: &fs::DirEntry, args: &Args, path_index: usize) -> Opti
 
 /// Fuzzy search for executable names
 fn search_name_fuzzy(searcher: &PathSearcher, query: &str, args: &Args) -> Vec<SearchResult> {
-    use crate::path_resolver::FuzzyMatcher;
     use std::ffi::OsStr;
 
     let matcher = FuzzyMatcher::new(query);
@@ -532,11 +537,11 @@ fn get_current_exe_dir() -> Option<PathBuf> {
 
 fn handle_prefer<W: Write>(
     searcher: &PathSearcher,
-    target: &crate::cli::PreferTarget,
+    target: &crate::cli::args::PreferTarget,
     args: &Args,
     out: &mut W,
 ) -> i32 {
-    use crate::cli::PreferTarget;
+    use crate::cli::args::PreferTarget;
 
     match target {
         PreferTarget::IndexBased { name, index } => {
@@ -622,8 +627,6 @@ fn handle_prefer_path<W: Write>(
     args: &Args,
     out: &mut W,
 ) -> i32 {
-    use path_resolver::{looks_like_exact_path, resolve_path};
-
     let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
     // Determine if this is an exact path or fuzzy pattern
@@ -723,8 +726,6 @@ fn handle_prefer_path_only<W: Write>(
     args: &Args,
     out: &mut W,
 ) -> i32 {
-    use path_resolver::{looks_like_exact_path, resolve_path};
-
     let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
     // Resolve the path
@@ -816,12 +817,11 @@ fn handle_prefer_fuzzy<W: Write>(
 
 fn handle_delete<W: Write>(
     searcher: &PathSearcher,
-    targets: &[crate::cli::DeleteTarget],
+    targets: &[crate::cli::args::DeleteTarget],
     args: &Args,
     out: &mut W,
 ) -> i32 {
-    use crate::cli::DeleteTarget;
-    use crate::path_resolver::{looks_like_exact_path, resolve_path};
+    use crate::cli::args::DeleteTarget;
 
     let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let mut indices_to_delete = Vec::new();
@@ -952,9 +952,6 @@ fn handle_delete<W: Write>(
 
 #[allow(clippy::too_many_lines)]
 fn handle_apply(shell_opt: Option<&String>, no_protect: bool) -> i32 {
-    use crate::config_manager::save_path;
-    use crate::session_tracker::cleanup_old_sessions;
-    use crate::shell_detect::{Shell, detect_current_shell};
     use std::collections::HashSet;
 
     let mut path_var = env::var("PATH").unwrap_or_default();
@@ -962,7 +959,7 @@ fn handle_apply(shell_opt: Option<&String>, no_protect: bool) -> i32 {
     // Apply protected paths unless --no-protect is set
     // Protection is silent - just ensures configured paths are present
     if !no_protect {
-        if let Ok(protected_path_bufs) = crate::protected_config::load_protected_paths() {
+        if let Ok(protected_path_bufs) = protected_paths::load_protected_paths() {
             // Normalize paths by removing trailing slashes for comparison
             let current_paths: HashSet<String> = path_var
                 .split(':')
@@ -1000,7 +997,7 @@ fn handle_apply(shell_opt: Option<&String>, no_protect: bool) -> i32 {
                 }
             };
 
-            if let Err(e) = save_path(&shell, &path_var) {
+            if let Err(e) = shell_paths::save_path(&shell, &path_var) {
                 eprintln!("Error: {e}");
                 return 2;
             }
@@ -1019,7 +1016,7 @@ fn handle_apply(shell_opt: Option<&String>, no_protect: bool) -> i32 {
                 let mut all_ok = true;
 
                 for shell in &shells {
-                    if let Err(e) = save_path(shell, &path_var) {
+                    if let Err(e) = shell_paths::save_path(shell, &path_var) {
                         eprintln!("Error applying to {}: {e}", shell.as_str());
                         all_ok = false;
                     } else {
@@ -1032,7 +1029,11 @@ fn handle_apply(shell_opt: Option<&String>, no_protect: bool) -> i32 {
                     }
                 }
 
-                if all_ok { 0 } else { 2 }
+                if all_ok {
+                    0
+                } else {
+                    2
+                }
             } else {
                 let shell = match shell_str.parse::<Shell>() {
                     Ok(s) => s,
@@ -1042,7 +1043,7 @@ fn handle_apply(shell_opt: Option<&String>, no_protect: bool) -> i32 {
                     }
                 };
 
-                if let Err(e) = save_path(&shell, &path_var) {
+                if let Err(e) = shell_paths::save_path(&shell, &path_var) {
                     eprintln!("Error: {e}");
                     return 2;
                 }
@@ -1077,8 +1078,6 @@ fn handle_apply(shell_opt: Option<&String>, no_protect: bool) -> i32 {
 }
 
 fn handle_diff(full: bool) -> i32 {
-    use crate::path_diff::{compute_diff, format_diff_with_limit};
-
     let current_path = env::var("PATH").unwrap_or_default();
     let use_color = atty::is(atty::Stream::Stdout);
 
@@ -1270,11 +1269,9 @@ fn handle_redo(count: usize) -> i32 {
 }
 
 fn handle_save_profile(profile_name: &str) -> i32 {
-    use crate::config_manager::save_profile;
-
     let path_var = env::var("PATH").unwrap_or_default();
 
-    match save_profile(profile_name, &path_var) {
+    match shell_paths::save_profile(profile_name, &path_var) {
         Ok(()) => {
             let num_entries = path_var.split(':').filter(|s| !s.is_empty()).count();
             println!("Saved profile '{profile_name}' ({num_entries} entries)");
@@ -1288,13 +1285,10 @@ fn handle_save_profile(profile_name: &str) -> i32 {
 }
 
 fn handle_load_profile(profile_name: &str) -> i32 {
-    use crate::config_manager::load_profile;
     use std::io::Write;
 
-    match load_profile(profile_name) {
+    match shell_paths::load_profile(profile_name) {
         Ok(parsed) => {
-            use crate::path_file::apply_path_sections;
-
             // Get current PATH to use as base for prepend/append
             let current_path = env::var("PATH").unwrap_or_default();
 
@@ -1370,9 +1364,7 @@ fn handle_load_profile(profile_name: &str) -> i32 {
 }
 
 fn handle_remove_profile(profile_name: &str) -> i32 {
-    use crate::config_manager::delete_profile;
-
-    match delete_profile(profile_name) {
+    match shell_paths::delete_profile(profile_name) {
         Ok(()) => {
             println!("Removed profile '{profile_name}'");
             0
@@ -1386,6 +1378,7 @@ fn handle_remove_profile(profile_name: &str) -> i32 {
 
 // TTY detection using isatty(3)
 mod atty {
+    use crate::platform;
     use std::os::unix::io::AsRawFd;
 
     pub fn is(stream: Stream) -> bool {
@@ -1394,7 +1387,7 @@ mod atty {
             Stream::Stdin => std::io::stdin().as_raw_fd(),
         };
 
-        crate::system::is_tty(fd)
+        platform::is_tty(fd)
     }
 
     #[derive(Copy, Clone)]

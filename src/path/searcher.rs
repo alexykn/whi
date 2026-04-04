@@ -350,7 +350,7 @@ impl PathSearcher {
         pattern: &str,
         executable_name: Option<&str>,
     ) -> Vec<(usize, &PathBuf)> {
-        use crate::path_resolver::FuzzyMatcher;
+        use crate::path::fuzzy::FuzzyMatcher;
 
         let matcher = FuzzyMatcher::new(pattern);
         let mut fuzzy_results = Vec::new();
@@ -388,7 +388,7 @@ impl PathSearcher {
     /// Check if an executable exists in a directory
     #[must_use]
     pub fn has_executable(&self, dir: &std::path::Path, name: &str) -> bool {
-        use crate::executor::ExecutableCheck;
+        use crate::search::result::ExecutableCheck;
 
         let exec_path = dir.join(name);
         exec_path.exists() && ExecutableCheck::new(&exec_path).is_executable()

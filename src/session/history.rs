@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[cfg(unix)]
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 
-use crate::session_tracker;
+use crate::session::store;
 
 /// Maximum history snapshots to keep (matches session tracker behaviour)
 pub const MAX_HISTORY_SNAPSHOTS: usize = 500;
@@ -76,7 +76,7 @@ impl HistoryContext {
 }
 
 fn global_history_files(pid: u32) -> Result<HistoryFiles, String> {
-    let history_file = session_tracker::get_session_file(pid)?;
+    let history_file = store::get_session_file(pid)?;
     let session_dir = history_file
         .parent()
         .ok_or_else(|| "Failed to determine session directory".to_string())?
@@ -347,42 +347,7 @@ fn clear_history(files: &HistoryFiles) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::env;
-    use std::path::Path;
-    use std::sync::MutexGuard;
     use tempfile::TempDir;
-
-    struct HistoryTempDir {
-        _dir: TempDir,
-        old_tmp: Option<String>,
-        _guard: MutexGuard<'static, ()>,
-    }
-
-    impl HistoryTempDir {
-        fn new() -> Self {
-            let guard = crate::test_utils::env_lock()
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let dir = TempDir::new().unwrap();
-            let old_xdg = env::var("XDG_RUNTIME_DIR").ok();
-            env::set_var("XDG_RUNTIME_DIR", dir.path());
-            Self {
-                _dir: dir,
-                old_tmp: old_xdg,
-                _guard: guard,
-            }
-        }
-    }
-
-    impl Drop for HistoryTempDir {
-        fn drop(&mut self) {
-            if let Some(ref value) = self.old_tmp {
-                env::set_var("XDG_RUNTIME_DIR", value);
-            } else {
-                env::remove_var("XDG_RUNTIME_DIR");
-            }
-        }
-    }
 
     #[test]
     fn write_and_read_snapshots() {

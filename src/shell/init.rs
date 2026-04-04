@@ -15,8 +15,8 @@ pub fn generate_init_script(shell: &str) -> Result<String, String> {
     Ok(script)
 }
 
-const POSIX_INIT: &str = include_str!("posix_integration.sh");
-const FISH_INIT: &str = include_str!("fish_integration.fish");
+const POSIX_INIT: &str = include_str!("templates/posix_integration.sh");
+const FISH_INIT: &str = include_str!("templates/fish_integration.fish");
 
 fn escape_for_double_quotes(input: &str) -> String {
     let mut escaped = String::with_capacity(input.len());

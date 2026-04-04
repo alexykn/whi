@@ -150,13 +150,13 @@ mod tests {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let old_home = env::var("HOME").ok();
-        env::set_var("HOME", "/home/testuser");
+        unsafe { env::set_var("HOME", "/home/testuser") };
         assert_eq!(expand_tilde("~/bin"), "/home/testuser/bin");
         assert_eq!(expand_tilde("~/"), "/home/testuser/");
         if let Some(val) = old_home {
-            env::set_var("HOME", val);
+            unsafe { env::set_var("HOME", val) };
         } else {
-            env::remove_var("HOME");
+            unsafe { env::remove_var("HOME") };
         }
     }
 
@@ -166,12 +166,12 @@ mod tests {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let old_home = env::var("HOME").ok();
-        env::set_var("HOME", "/home/testuser");
+        unsafe { env::set_var("HOME", "/home/testuser") };
         assert_eq!(expand_tilde("~"), "/home/testuser");
         if let Some(val) = old_home {
-            env::set_var("HOME", val);
+            unsafe { env::set_var("HOME", val) };
         } else {
-            env::remove_var("HOME");
+            unsafe { env::remove_var("HOME") };
         }
     }
 

@@ -3,7 +3,7 @@ use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 
-use crate::atomic_file::AtomicFile;
+use crate::io::atomic_file::AtomicFile;
 
 #[derive(Debug, Clone, Default)]
 pub struct Config {

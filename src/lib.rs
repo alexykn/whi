@@ -1,25 +1,17 @@
 #![allow(clippy::missing_errors_doc)]
 #![allow(clippy::missing_panics_doc)]
 
-pub mod app;
-pub mod atomic_file;
+extern crate self as whi;
+
 pub mod cli;
+pub mod commands;
 pub mod config;
-pub mod config_manager;
-pub mod executor;
-pub mod file_utils;
-pub mod history;
-pub mod output;
+pub mod io;
 pub mod path;
-pub mod path_diff;
-pub mod path_file;
-pub mod path_guard;
-pub mod path_resolver;
-pub mod protected_config;
-pub mod session_tracker;
-pub mod shell_detect;
-pub mod shell_integration;
-pub mod system;
+pub mod platform;
+pub mod search;
+pub mod session;
+pub mod shell;
 
 #[cfg(test)]
 pub(crate) mod test_utils {

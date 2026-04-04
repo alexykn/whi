@@ -1,4 +1,4 @@
-use crate::executor::SearchResult;
+use crate::search::result::SearchResult;
 use std::io::Write;
 use std::time::SystemTime;
 

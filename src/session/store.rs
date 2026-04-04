@@ -6,7 +6,7 @@ use std::path::PathBuf;
 #[cfg(unix)]
 use std::os::unix::fs::DirBuilderExt;
 
-use crate::system;
+use crate::platform;
 
 /// Get or create session directory (user-specific, secure)
 fn get_session_dir() -> Result<PathBuf, String> {
@@ -16,7 +16,7 @@ fn get_session_dir() -> Result<PathBuf, String> {
         .unwrap_or_else(|_| "/tmp".to_string());
 
     // Use UID for additional security
-    let uid = system::get_user_id().map_err(|e| format!("Failed to get user ID: {e}"))?;
+    let uid = platform::get_user_id().map_err(|e| format!("Failed to get user ID: {e}"))?;
 
     let session_dir = PathBuf::from(format!("{base_dir}/whi-{uid}"));
 
@@ -52,50 +52,50 @@ pub fn get_session_file(pid: u32) -> Result<PathBuf, String> {
 
 /// Write `PATH` snapshot to session log
 pub fn write_path_snapshot(pid: u32, path_string: &str) -> Result<(), String> {
-    crate::history::HistoryContext::global(pid)?.write_snapshot(path_string)
+    HistoryContext::global(pid)?.write_snapshot(path_string)
 }
 
 /// Read all `PATH` snapshots from session log
 pub fn read_path_snapshots(pid: u32) -> Result<Vec<String>, String> {
-    crate::history::HistoryContext::global(pid)?.read_snapshots()
+    HistoryContext::global(pid)?.read_snapshots()
 }
 
 /// Get the initial `PATH` snapshot (first snapshot in session)
 pub fn get_initial_path(pid: u32) -> Result<Option<String>, String> {
-    crate::history::HistoryContext::global(pid)?.initial_snapshot()
+    HistoryContext::global(pid)?.initial_snapshot()
 }
 
 /// Truncate snapshots to keep only the first `keep_count` snapshots
 /// This is used by undo/reset to discard "future" snapshots from abandoned timelines
 pub fn truncate_snapshots(pid: u32, keep_count: usize) -> Result<(), String> {
-    crate::history::HistoryContext::global(pid)?.truncate(keep_count)
+    HistoryContext::global(pid)?.truncate(keep_count)
 }
 
 /// Get cursor file path for given `PID`
 /// Get current cursor position (index into snapshots)
 /// Returns `None` if at end of history (no cursor file = at latest)
 pub fn get_cursor(pid: u32) -> Result<Option<usize>, String> {
-    crate::history::HistoryContext::global(pid)?.get_cursor()
+    HistoryContext::global(pid)?.get_cursor()
 }
 
 /// Set cursor position (index into snapshots)
 pub fn set_cursor(pid: u32, position: usize) -> Result<(), String> {
-    crate::history::HistoryContext::global(pid)?.set_cursor(position)
+    HistoryContext::global(pid)?.set_cursor(position)
 }
 
 /// Clear cursor (move to end of history)
 pub fn clear_cursor(pid: u32) -> Result<(), String> {
-    crate::history::HistoryContext::global(pid)?.clear_cursor()
+    HistoryContext::global(pid)?.clear_cursor()
 }
 
 /// Get current `PATH` snapshot based on cursor position
 pub fn get_current_snapshot(pid: u32) -> Result<Option<String>, String> {
-    crate::history::HistoryContext::global(pid)?.current_snapshot()
+    HistoryContext::global(pid)?.current_snapshot()
 }
 
 /// Clear the session log for given `PID`
 pub fn clear_session(pid: u32) -> Result<(), String> {
-    crate::history::HistoryContext::global(pid)?.clear_history()
+    HistoryContext::global(pid)?.clear_history()
 }
 
 /// Get all session files in the session directory
@@ -172,7 +172,7 @@ mod tests {
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             let dir = TempDir::new().unwrap();
             let old_xdg = env::var("XDG_RUNTIME_DIR").ok();
-            env::set_var("XDG_RUNTIME_DIR", dir.path());
+            unsafe { env::set_var("XDG_RUNTIME_DIR", dir.path()) };
             Self {
                 _dir: dir,
                 old_tmp: old_xdg,
@@ -184,9 +184,9 @@ mod tests {
     impl Drop for SessionTempDir {
         fn drop(&mut self) {
             if let Some(ref value) = self.old_tmp {
-                env::set_var("XDG_RUNTIME_DIR", value);
+                unsafe { env::set_var("XDG_RUNTIME_DIR", value) };
             } else {
-                env::remove_var("XDG_RUNTIME_DIR");
+                unsafe { env::remove_var("XDG_RUNTIME_DIR") };
             }
         }
     }
@@ -340,7 +340,7 @@ mod tests {
 
         // Manually call cleanup with max=5
         // Should keep snapshot 0 + last 4 (indices 7, 8, 9, 10)
-        crate::history::HistoryContext::global(pid)
+        HistoryContext::global(pid)
             .unwrap()
             .truncate_keep_initial_and_tail(5)
             .unwrap();
@@ -408,3 +408,4 @@ mod tests {
         let _ = clear_session(pid);
     }
 }
+use crate::session::history::HistoryContext;

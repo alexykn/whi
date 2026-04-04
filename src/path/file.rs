@@ -141,7 +141,7 @@ pub fn expand_shell_vars(value: &str) -> String {
 }
 
 fn parse_v2_format(content: &str) -> Result<ParsedPathFile, String> {
-    use crate::file_utils::strip_inline_comment;
+    use crate::io::line_utils::strip_inline_comment;
 
     let mut path_sections = PathSections::default();
     let mut current_path_section: Option<&str> = None;
@@ -229,7 +229,7 @@ fn validate_path_sections(path_sections: &PathSections) -> Result<(), String> {
 }
 
 fn parse_v1_format(content: &str) -> Result<ParsedPathFile, String> {
-    use crate::file_utils::strip_inline_comment;
+    use crate::io::line_utils::strip_inline_comment;
 
     let mut path_entries = Vec::new();
     let mut in_path_section = false;

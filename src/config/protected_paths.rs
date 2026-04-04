@@ -3,7 +3,7 @@ use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 
-use crate::atomic_file::AtomicFile;
+use crate::io::atomic_file::AtomicFile;
 
 fn default_protected_paths() -> Vec<PathBuf> {
     #[cfg(target_os = "macos")]
@@ -47,7 +47,7 @@ fn get_migration_marker_path() -> Result<PathBuf, String> {
 }
 
 fn parse_protected_paths(content: &str) -> Result<Vec<PathBuf>, String> {
-    use crate::file_utils::strip_inline_comment;
+    use crate::io::line_utils::strip_inline_comment;
 
     let mut paths = Vec::new();
     let mut found_header = false;
