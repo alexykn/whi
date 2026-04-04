@@ -1,5 +1,5 @@
 use std::env;
-use std::io::{BufWriter, StdoutLock, Write};
+use std::io::Write;
 
 use crate::cli::args::{Args, ColorWhen};
 use crate::path::guard::PathGuard;
@@ -13,10 +13,11 @@ pub fn history_for_current_scope() -> Result<HistoryContext, String> {
 pub fn write_snapshot_safe(new_path: &str, args: &Args) {
     match history_for_current_scope() {
         Ok(history) => {
-            if let Err(e) = history.write_snapshot(new_path) {
-                if !args.quiet && !args.silent {
-                    eprintln!("Warning: Failed to write snapshot: {e}");
-                }
+            if let Err(e) = history.write_snapshot(new_path)
+                && !args.quiet
+                && !args.silent
+            {
+                eprintln!("Warning: Failed to write snapshot: {e}");
             }
         }
         Err(e) => {
@@ -27,21 +28,47 @@ pub fn write_snapshot_safe(new_path: &str, args: &Args) {
     }
 }
 
-pub fn output_path(out: &mut BufWriter<StdoutLock>, new_path: &str) -> i32 {
+pub fn output_path<W: Write>(out: &mut W, new_path: &str) -> i32 {
     let original_path = env::var("PATH").unwrap_or_default();
     let guarded_path =
         PathGuard::default().ensure_protected_paths(&original_path, new_path.to_string());
 
-    writeln!(out, "{guarded_path}").ok();
-    out.flush().ok();
+    if let Err(err) = writeln!(out, "{guarded_path}") {
+        eprintln!("Error: Failed to write PATH output: {err}");
+        return 2;
+    }
+    if let Err(err) = out.flush() {
+        eprintln!("Error: Failed to flush PATH output: {err}");
+        return 2;
+    }
+
     0
 }
 
-pub fn should_use_color(args: &Args) -> bool {
+pub fn emit_line<W: Write>(out: &mut W, line: &str) -> i32 {
+    if let Err(err) = writeln!(out, "{line}") {
+        eprintln!("Error: Failed to write output: {err}");
+        return 2;
+    }
+    if let Err(err) = out.flush() {
+        eprintln!("Error: Failed to flush output: {err}");
+        return 2;
+    }
+
+    0
+}
+
+pub fn should_use_color(args: &Args, stdout_is_tty: bool) -> bool {
     match args.color {
         ColorWhen::Always => true,
         ColorWhen::Never => false,
-        ColorWhen::Auto => crate::platform::is_tty(1),
+        ColorWhen::Auto => stdout_is_tty,
+    }
+}
+
+pub fn warn_if_loud(args: &Args, message: &str) {
+    if !args.quiet && !args.silent {
+        eprintln!("Warning: {message}");
     }
 }
 

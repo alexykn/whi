@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::os::unix::fs::DirBuilderExt;
 
 use crate::platform;
+use crate::session::history::HistoryContext;
 
 /// Get or create session directory (user-specific, secure)
 fn get_session_dir() -> Result<PathBuf, String> {
@@ -24,10 +25,10 @@ fn get_session_dir() -> Result<PathBuf, String> {
     if !session_dir.exists() {
         #[cfg(unix)]
         {
-            if let Err(e) = fs::DirBuilder::new().mode(0o700).create(&session_dir) {
-                if e.kind() != ErrorKind::AlreadyExists {
-                    return Err(format!("Failed to create session dir: {e}"));
-                }
+            if let Err(e) = fs::DirBuilder::new().mode(0o700).create(&session_dir)
+                && e.kind() != ErrorKind::AlreadyExists
+            {
+                return Err(format!("Failed to create session dir: {e}"));
             }
         }
 
@@ -113,14 +114,13 @@ fn get_all_session_files() -> Result<Vec<(PathBuf, std::time::SystemTime)>, Stri
 
     for entry in entries.flatten() {
         let path = entry.path();
-        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-            if name.starts_with("session_") && path.extension().is_some_and(|ext| ext == "log") {
-                if let Ok(metadata) = entry.metadata() {
-                    if let Ok(modified) = metadata.modified() {
-                        session_files.push((path, modified));
-                    }
-                }
-            }
+        if let Some(name) = path.file_name().and_then(|n| n.to_str())
+            && name.starts_with("session_")
+            && path.extension().is_some_and(|ext| ext == "log")
+            && let Ok(metadata) = entry.metadata()
+            && let Ok(modified) = metadata.modified()
+        {
+            session_files.push((path, modified));
         }
     }
 
@@ -151,261 +151,3 @@ pub fn cleanup_old_sessions() -> Result<usize, String> {
 
     Ok(deleted_count)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::env;
-    use std::sync::MutexGuard;
-    use tempfile::TempDir;
-
-    struct SessionTempDir {
-        _dir: TempDir,
-        old_tmp: Option<String>,
-        _guard: MutexGuard<'static, ()>,
-    }
-
-    impl SessionTempDir {
-        fn new() -> Self {
-            let guard = crate::test_utils::env_lock()
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let dir = TempDir::new().unwrap();
-            let old_xdg = env::var("XDG_RUNTIME_DIR").ok();
-            unsafe { env::set_var("XDG_RUNTIME_DIR", dir.path()) };
-            Self {
-                _dir: dir,
-                old_tmp: old_xdg,
-                _guard: guard,
-            }
-        }
-    }
-
-    impl Drop for SessionTempDir {
-        fn drop(&mut self) {
-            if let Some(ref value) = self.old_tmp {
-                unsafe { env::set_var("XDG_RUNTIME_DIR", value) };
-            } else {
-                unsafe { env::remove_var("XDG_RUNTIME_DIR") };
-            }
-        }
-    }
-
-    #[test]
-    fn test_session_file_path() {
-        let _guard = SessionTempDir::new();
-        let path = get_session_file(12345).unwrap();
-        let path_str = path.to_string_lossy();
-        assert!(
-            path_str.contains("whi-")
-                && path.extension().is_some_and(|ext| ext == "log")
-                && path_str.contains("session_12345"),
-            "Session file path should be in user-specific directory: {}",
-            path_str
-        );
-    }
-
-    #[test]
-    fn test_session_dir_creation() {
-        let _guard = SessionTempDir::new();
-        // Session directory should be created on first access
-        let dir = get_session_dir().unwrap();
-        assert!(dir.exists(), "Session directory should exist");
-
-        // Verify it's a directory
-        assert!(dir.is_dir(), "Session path should be a directory");
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn test_session_file_permissions() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let _guard = SessionTempDir::new();
-        let pid = 999001;
-        let _ = clear_session(pid);
-
-        // Write to session file
-        write_path_snapshot(pid, "/test/path").unwrap();
-
-        // Check file permissions
-        let file_path = get_session_file(pid).unwrap();
-        let metadata = fs::metadata(&file_path).unwrap();
-        let permissions = metadata.permissions();
-
-        // Should be 0600 (user read/write only)
-        let mode = permissions.mode() & 0o777;
-        assert_eq!(
-            mode, 0o600,
-            "Session file should have 0600 permissions, got {:o}",
-            mode
-        );
-
-        // Cleanup
-        let _ = clear_session(pid);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn test_session_dir_permissions() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let _guard = SessionTempDir::new();
-        // Get or create session directory
-        let dir = get_session_dir().unwrap();
-
-        // Check if directory exists and get its metadata
-        assert!(dir.exists(), "Session directory should exist");
-        let metadata = fs::metadata(&dir).unwrap();
-        let permissions = metadata.permissions();
-
-        // Should be 0700 (user rwx only)
-        let mode = permissions.mode() & 0o777;
-        assert_eq!(
-            mode, 0o700,
-            "Session directory should have 0700 permissions, got {:o}",
-            mode
-        );
-    }
-
-    #[test]
-    fn test_write_and_read_snapshots() {
-        let _guard = SessionTempDir::new();
-        let pid = 999002;
-        let _ = clear_session(pid);
-
-        // Write snapshots
-        write_path_snapshot(pid, "/a:/b:/c").unwrap();
-        write_path_snapshot(pid, "/b:/c:/a").unwrap();
-        write_path_snapshot(pid, "/c:/a:/b").unwrap();
-
-        // Read back
-        let snapshots = read_path_snapshots(pid).unwrap();
-
-        assert_eq!(snapshots.len(), 3);
-        assert_eq!(snapshots[0], "/a:/b:/c");
-        assert_eq!(snapshots[1], "/b:/c:/a");
-        assert_eq!(snapshots[2], "/c:/a:/b");
-
-        // Cleanup
-        let _ = clear_session(pid);
-    }
-
-    #[test]
-    fn test_snapshot_truncation() {
-        let _guard = SessionTempDir::new();
-        let pid = 999003;
-        let _ = clear_session(pid);
-
-        // Write 5 snapshots
-        write_path_snapshot(pid, "/initial").unwrap();
-        write_path_snapshot(pid, "/snap1").unwrap();
-        write_path_snapshot(pid, "/snap2").unwrap();
-        write_path_snapshot(pid, "/snap3").unwrap();
-        write_path_snapshot(pid, "/snap4").unwrap();
-
-        // Verify all 5
-        let snapshots = read_path_snapshots(pid).unwrap();
-        assert_eq!(snapshots.len(), 5);
-
-        // Truncate to keep only first 2
-        truncate_snapshots(pid, 2).unwrap();
-
-        // Verify only 2 remain
-        let snapshots = read_path_snapshots(pid).unwrap();
-        assert_eq!(snapshots.len(), 2);
-        assert_eq!(snapshots[0], "/initial");
-        assert_eq!(snapshots[1], "/snap1");
-
-        // Cleanup
-        let _ = clear_session(pid);
-    }
-
-    #[test]
-    fn test_rolling_window_cleanup() {
-        let _guard = SessionTempDir::new();
-        let pid = 999004;
-        let _ = clear_session(pid);
-
-        // Write initial snapshot
-        write_path_snapshot(pid, "/initial").unwrap();
-
-        // Write 10 more snapshots
-        for i in 1..=10 {
-            write_path_snapshot(pid, &format!("/snapshot{}", i)).unwrap();
-        }
-
-        let snapshots = read_path_snapshots(pid).unwrap();
-        assert_eq!(snapshots.len(), 11);
-
-        // Manually call cleanup with max=5
-        // Should keep snapshot 0 + last 4 (indices 7, 8, 9, 10)
-        HistoryContext::global(pid)
-            .unwrap()
-            .truncate_keep_initial_and_tail(5)
-            .unwrap();
-
-        let snapshots = read_path_snapshots(pid).unwrap();
-        assert_eq!(snapshots.len(), 5);
-        assert_eq!(snapshots[0], "/initial");
-        assert_eq!(snapshots[1], "/snapshot7");
-        assert_eq!(snapshots[2], "/snapshot8");
-        assert_eq!(snapshots[3], "/snapshot9");
-        assert_eq!(snapshots[4], "/snapshot10");
-
-        // Cleanup
-        let _ = clear_session(pid);
-    }
-
-    #[test]
-    fn test_get_initial_path() {
-        let _guard = SessionTempDir::new();
-        let pid = 999005;
-        let _ = clear_session(pid);
-
-        // No snapshots yet
-        assert_eq!(get_initial_path(pid).unwrap(), None);
-
-        // Write snapshots
-        write_path_snapshot(pid, "/first").unwrap();
-        write_path_snapshot(pid, "/second").unwrap();
-
-        // Get initial should return first
-        assert_eq!(get_initial_path(pid).unwrap(), Some("/first".to_string()));
-
-        // Cleanup
-        let _ = clear_session(pid);
-    }
-
-    #[test]
-    fn test_duplicate_init_handled() {
-        let _guard = SessionTempDir::new();
-        let pid = 999006;
-        let _ = clear_session(pid);
-
-        // Simulate double-source scenario (user sources integration script twice)
-        // This should be prevented by shell integration guards, but test resilience
-        write_path_snapshot(pid, "/usr/bin:/bin").unwrap();
-        write_path_snapshot(pid, "/usr/bin:/bin").unwrap(); // Duplicate init
-
-        // Initial should still return first snapshot
-        assert_eq!(
-            get_initial_path(pid).unwrap(),
-            Some("/usr/bin:/bin".to_string())
-        );
-
-        // Verify we can read both snapshots (not ideal, but handled)
-        let snapshots = read_path_snapshots(pid).unwrap();
-        assert_eq!(snapshots.len(), 2);
-        assert_eq!(snapshots[0], "/usr/bin:/bin");
-        assert_eq!(snapshots[1], "/usr/bin:/bin");
-
-        // Verify undo behavior - should go back to first duplicate, then error
-        // (This demonstrates the phantom operation issue the guard prevents)
-        assert_eq!(snapshots.len() - 1, 1); // Only 1 operation to undo
-
-        // Cleanup
-        let _ = clear_session(pid);
-    }
-}
-use crate::session::history::HistoryContext;

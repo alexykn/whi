@@ -36,12 +36,11 @@ impl OutputFormatter {
         }
 
         // If following symlinks, show canonical path
-        if follow_symlinks {
-            if let Some(ref canonical) = result.canonical_path {
-                if canonical != &result.path {
-                    write!(out, " → {}", canonical.display())?;
-                }
-            }
+        if follow_symlinks
+            && let Some(ref canonical) = result.canonical_path
+            && canonical != &result.path
+        {
+            write!(out, " → {}", canonical.display())?;
         }
 
         if self.print0 {

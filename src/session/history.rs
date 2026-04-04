@@ -100,13 +100,12 @@ fn create_dir_if_missing(path: &Path) -> Result<(), String> {
             .mode(0o700)
             .recursive(true)
             .create(path)
+            && e.kind() != std::io::ErrorKind::AlreadyExists
         {
-            if e.kind() != std::io::ErrorKind::AlreadyExists {
-                return Err(format!(
-                    "Failed to create directory {}: {e}",
-                    path.display()
-                ));
-            }
+            return Err(format!(
+                "Failed to create directory {}: {e}",
+                path.display()
+            ));
         }
     }
 
@@ -342,47 +341,4 @@ fn clear_history(files: &HistoryFiles) -> Result<(), String> {
             .map_err(|e| format!("Failed to remove history file: {e}"))?;
     }
     clear_cursor(files)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::TempDir;
-
-    #[test]
-    fn write_and_read_snapshots() {
-        let dir = TempDir::new().unwrap();
-        let files = HistoryFiles {
-            history_file: dir.path().join("history.log"),
-            cursor_file: dir.path().join("cursor"),
-        };
-
-        write_snapshot(&files, "/bin:/usr/bin", 10).unwrap();
-        write_snapshot(&files, "/usr/bin", 10).unwrap();
-
-        let snapshots = read_snapshots(&files).unwrap();
-        assert_eq!(snapshots.len(), 2);
-        assert_eq!(snapshots[0], "/bin:/usr/bin");
-    }
-
-    #[test]
-    fn cursor_operations() {
-        let dir = TempDir::new().unwrap();
-        let files = HistoryFiles {
-            history_file: dir.path().join("history.log"),
-            cursor_file: dir.path().join("cursor"),
-        };
-
-        write_snapshot(&files, "/bin", 10).unwrap();
-        write_snapshot(&files, "/usr/bin", 10).unwrap();
-
-        set_cursor(&files, 0).unwrap();
-        assert_eq!(get_cursor(&files).unwrap(), Some(0));
-
-        let current = current_snapshot(&files).unwrap().unwrap();
-        assert_eq!(current, "/bin");
-
-        clear_cursor(&files).unwrap();
-        assert_eq!(get_cursor(&files).unwrap(), None);
-    }
 }

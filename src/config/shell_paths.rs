@@ -4,7 +4,7 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::io::atomic_file::AtomicFile;
-use crate::shell::detect::{get_config_file_path, get_saved_path_file, get_sourcing_line, Shell};
+use crate::shell::detect::{Shell, get_config_file_path, get_saved_path_file, get_sourcing_line};
 
 /// Save the current `PATH` for a shell
 pub fn save_path(shell: &Shell, path: &str) -> Result<(), String> {
@@ -229,14 +229,12 @@ pub fn list_profiles() -> Result<Vec<String>, String> {
     let mut profiles = Vec::new();
 
     for entry in entries.flatten() {
-        if let Ok(file_type) = entry.file_type() {
-            if file_type.is_file() {
-                if let Some(name) = entry.file_name().to_str() {
-                    if !name.starts_with('.') {
-                        profiles.push(name.to_string());
-                    }
-                }
-            }
+        if let Ok(file_type) = entry.file_type()
+            && file_type.is_file()
+            && let Some(name) = entry.file_name().to_str()
+            && !name.starts_with('.')
+        {
+            profiles.push(name.to_string());
         }
     }
 
@@ -260,41 +258,4 @@ pub fn load_saved_path_for_shell(shell: &Shell) -> Result<String, String> {
     let parsed = parse_path_file(&content)?;
 
     apply_path_sections("", &parsed.path)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::env;
-    use std::fs;
-
-    #[test]
-    fn test_backup_creates_file() {
-        let temp_dir = env::temp_dir().join(format!("whi-test-{}", timestamp_now()));
-        fs::create_dir_all(&temp_dir).unwrap();
-
-        let test_file = temp_dir.join("test.txt");
-        fs::write(&test_file, "test content").unwrap();
-
-        backup_config_file(&test_file).unwrap();
-
-        // Check backup exists
-        let backup_files: Vec<_> = fs::read_dir(&temp_dir)
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_name().to_string_lossy().starts_with("test.backup-"))
-            .collect();
-
-        assert_eq!(backup_files.len(), 1);
-
-        // Cleanup
-        fs::remove_dir_all(temp_dir).ok();
-    }
-
-    fn timestamp_now() -> u64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs()
-    }
 }

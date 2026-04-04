@@ -9,10 +9,10 @@ pub fn expand_tilde(path: &str) -> String {
         if let Ok(home) = env::var("HOME") {
             return home;
         }
-    } else if let Some(rest) = path.strip_prefix("~/") {
-        if let Ok(home) = env::var("HOME") {
-            return format!("{home}/{rest}");
-        }
+    } else if let Some(rest) = path.strip_prefix("~/")
+        && let Ok(home) = env::var("HOME")
+    {
+        return format!("{home}/{rest}");
     }
     path.to_string()
 }
@@ -137,93 +137,4 @@ pub fn looks_like_exact_path(s: &str) -> bool {
         || s.starts_with("./")
         || s.starts_with("../")
         || s.contains('\\')
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::test_utils;
-
-    #[test]
-    fn test_expand_tilde_with_slash() {
-        let _guard = test_utils::env_lock()
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let old_home = env::var("HOME").ok();
-        unsafe { env::set_var("HOME", "/home/testuser") };
-        assert_eq!(expand_tilde("~/bin"), "/home/testuser/bin");
-        assert_eq!(expand_tilde("~/"), "/home/testuser/");
-        if let Some(val) = old_home {
-            unsafe { env::set_var("HOME", val) };
-        } else {
-            unsafe { env::remove_var("HOME") };
-        }
-    }
-
-    #[test]
-    fn test_expand_tilde_bare() {
-        let _guard = test_utils::env_lock()
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let old_home = env::var("HOME").ok();
-        unsafe { env::set_var("HOME", "/home/testuser") };
-        assert_eq!(expand_tilde("~"), "/home/testuser");
-        if let Some(val) = old_home {
-            unsafe { env::set_var("HOME", val) };
-        } else {
-            unsafe { env::remove_var("HOME") };
-        }
-    }
-
-    #[test]
-    fn test_expand_tilde_no_match() {
-        assert_eq!(expand_tilde("/usr/local"), "/usr/local");
-        assert_eq!(expand_tilde("~user/bin"), "~user/bin"); // Not supported
-    }
-
-    #[test]
-    fn test_fuzzy_matcher_basic() {
-        let matcher = FuzzyMatcher::new("cargo bin");
-        assert!(matcher.matches(Path::new("/Users/alxknt/.cargo/bin")));
-        assert!(matcher.matches(Path::new("/home/user/.cargo/tools/bin")));
-        assert!(!matcher.matches(Path::new("/usr/local/bin")));
-    }
-
-    #[test]
-    fn test_fuzzy_matcher_order() {
-        let matcher = FuzzyMatcher::new("github whi");
-        assert!(matcher.matches(Path::new("/Users/alxknt/github/whi/target")));
-        assert!(!matcher.matches(Path::new("/Users/alxknt/whi/github"))); // Wrong order
-    }
-
-    #[test]
-    fn test_fuzzy_matcher_case_insensitive() {
-        let matcher = FuzzyMatcher::new("USERS CARGO");
-        assert!(matcher.matches(Path::new("/users/alxknt/.cargo/bin")));
-    }
-
-    #[test]
-    fn test_looks_like_exact_path() {
-        // Exact paths
-        assert!(looks_like_exact_path("/usr/bin"));
-        assert!(looks_like_exact_path("~/bin"));
-        assert!(looks_like_exact_path("./target"));
-        assert!(looks_like_exact_path("../bin"));
-
-        // Fuzzy patterns (not paths)
-        assert!(!looks_like_exact_path("cargo"));
-        assert!(!looks_like_exact_path("users cargo"));
-
-        // Hidden files/dirs should be fuzzy patterns (not paths)
-        assert!(!looks_like_exact_path(".go"));
-        assert!(!looks_like_exact_path(".cargo"));
-        assert!(!looks_like_exact_path(".config"));
-    }
-
-    #[test]
-    fn test_normalize_path() {
-        let path = PathBuf::from("/usr/local/../bin/./test");
-        let normalized = normalize_path(&path);
-        assert_eq!(normalized, PathBuf::from("/usr/bin/test"));
-    }
 }

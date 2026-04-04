@@ -24,6 +24,24 @@ pub enum DeleteTarget {
     Path(String),
 }
 
+#[derive(Debug, Clone)]
+pub enum ApplyTarget {
+    CurrentShell,
+    Shell(String),
+}
+
+#[derive(Debug, Clone)]
+pub enum PathEdit {
+    Move { from: usize, to: usize },
+    Swap { first: usize, second: usize },
+}
+
+#[derive(Debug, Clone)]
+pub enum HistoryAction {
+    Undo(usize),
+    Redo(usize),
+}
+
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Default, Clone)]
 pub struct Args {
@@ -41,19 +59,17 @@ pub struct Args {
     pub stat: bool,
     pub no_index: bool,
     pub swap_fuzzy: bool,
-    pub move_indices: Option<(usize, usize)>,
-    pub swap_indices: Option<(usize, usize)>,
+    pub path_edit: Option<PathEdit>,
     pub prefer_target: Option<PreferTarget>,
     pub clean: bool,
     pub delete_targets: Vec<DeleteTarget>,
-    pub apply_shell: Option<Option<String>>, // None = not used, Some(None) = current, Some(Some(x)) = specific
+    pub apply_target: Option<ApplyTarget>,
     pub no_protect: bool,
     pub diff: bool,
     pub diff_full: bool,
     pub init_shell: Option<String>,
     pub reset: bool,
-    pub undo_count: Option<usize>, // None = not used, Some(n) = undo n operations
-    pub redo_count: Option<usize>, // None = not used, Some(n) = redo n operations
+    pub history_action: Option<HistoryAction>,
     pub save_profile: Option<String>,
     pub load_profile: Option<String>,
     pub remove_profile: Option<String>,
@@ -90,10 +106,10 @@ pub fn parse_prefer_arguments(tokens: Vec<String>) -> Result<PreferTarget, Strin
 
     if remaining.len() == 1 {
         let candidate = &remaining[0];
-        if let Ok(index) = candidate.parse::<usize>() {
-            if !looks_like_path(candidate) {
-                return Ok(PreferTarget::IndexBased { name, index });
-            }
+        if let Ok(index) = candidate.parse::<usize>()
+            && !looks_like_path(candidate)
+        {
+            return Ok(PreferTarget::IndexBased { name, index });
         }
     }
 
@@ -131,10 +147,10 @@ pub fn parse_delete_arguments(tokens: Vec<String>) -> Result<Vec<DeleteTarget>, 
 }
 
 fn parse_delete_target(target_str: &str) -> DeleteTarget {
-    if let Ok(index) = target_str.parse::<usize>() {
-        if !looks_like_path(target_str) {
-            return DeleteTarget::Index(index);
-        }
+    if let Ok(index) = target_str.parse::<usize>()
+        && !looks_like_path(target_str)
+    {
+        return DeleteTarget::Index(index);
     }
 
     DeleteTarget::Path(target_str.to_string())

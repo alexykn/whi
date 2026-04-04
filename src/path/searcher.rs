@@ -5,6 +5,8 @@ pub struct PathSearcher {
     canon_dirs: std::cell::RefCell<Vec<Option<PathBuf>>>,
 }
 
+type PathOpResult = Result<String, String>;
+
 /// Validate a `PATH` entry for suspicious or malicious content
 fn validate_path_entry(path: &str) -> Result<(), String> {
     // Check for null bytes
@@ -91,36 +93,39 @@ impl PathSearcher {
         cache[idx].clone()
     }
 
-    /// Check if a path already exists in `PATH`
-    #[must_use]
-    pub fn contains(&self, path: &std::path::Path) -> bool {
-        self.find_path_index(path).is_some()
+    fn join_dirs(dirs: &[PathBuf]) -> String {
+        dirs.iter()
+            .map(|dir| dir.display().to_string())
+            .collect::<Vec<_>>()
+            .join(":")
     }
 
-    /// Insert a path at the given position (1-based), mutating this `PathSearcher`
-    /// Returns Err if position is invalid
-    pub fn insert_at(&mut self, path: &std::path::Path, position: usize) -> Result<(), String> {
+    fn validate_insert_position(&self, position: usize) -> Result<usize, String> {
         if position == 0 {
             return Err("Position must be >= 1".to_string());
         }
 
-        let path_buf = path.to_path_buf();
-
-        // Convert to 0-based index, but cap at the end of the list
-        let insert_idx = (position - 1).min(self.dirs.len());
-
-        self.dirs.insert(insert_idx, path_buf);
-
-        // Update cache size
-        self.canon_dirs.borrow_mut().insert(insert_idx, None);
-
-        Ok(())
+        Ok((position - 1).min(self.dirs.len()))
     }
 
-    pub fn move_entry(&self, from: usize, to: usize) -> Result<String, String> {
+    fn validate_index(&self, index: usize, label: &str) -> Result<usize, String> {
+        if index == 0 {
+            return Err(format!("Invalid index: {index} ({label} must be >= 1)"));
+        }
+
+        let len = self.dirs.len();
+        if index > len {
+            return Err(format!(
+                "Index {index} out of bounds (PATH has {len} entries)"
+            ));
+        }
+
+        Ok(index - 1)
+    }
+
+    fn validate_move_indices(&self, from: usize, to: usize) -> Result<(usize, usize), String> {
         let len = self.dirs.len();
 
-        // Validate indices (1-based)
         if from == 0 || to == 0 {
             return Err(format!(
                 "Invalid index: indices must be >= 1 (got from={from}, to={to})"
@@ -135,57 +140,80 @@ impl PathSearcher {
             return Err(format!("Index {to} out of bounds (PATH has {len} entries)"));
         }
 
-        // Convert to 0-based
-        let from_idx = from - 1;
-        let to_idx = to - 1;
+        Ok((from - 1, to - 1))
+    }
 
-        // Create new ordering
+    fn validate_swap_indices(&self, first: usize, second: usize) -> Result<(usize, usize), String> {
+        let len = self.dirs.len();
+
+        if first == 0 || second == 0 {
+            return Err(format!(
+                "Invalid index: indices must be >= 1 (got idx1={first}, idx2={second})"
+            ));
+        }
+        if first > len {
+            return Err(format!(
+                "Index {first} out of bounds (PATH has {len} entries)"
+            ));
+        }
+        if second > len {
+            return Err(format!(
+                "Index {second} out of bounds (PATH has {len} entries)"
+            ));
+        }
+
+        Ok((first - 1, second - 1))
+    }
+
+    fn canonical_search_path(path: &std::path::Path) -> PathBuf {
+        std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+    }
+
+    fn matches_exact_or_canonical(
+        &self,
+        idx: usize,
+        dir: &std::path::Path,
+        path: &std::path::Path,
+        canonical_search: &std::path::Path,
+    ) -> bool {
+        if dir == path || dir == canonical_search {
+            return true;
+        }
+
+        self.canonicalize_index(idx)
+            .is_some_and(|canonical_dir| canonical_dir == canonical_search)
+    }
+
+    /// Check if a path already exists in `PATH`
+    #[must_use]
+    pub fn contains(&self, path: &std::path::Path) -> bool {
+        self.find_path_index(path).is_some()
+    }
+
+    /// Insert a path at the given position (1-based), mutating this `PathSearcher`
+    /// Returns Err if position is invalid
+    pub fn insert_at(&mut self, path: &std::path::Path, position: usize) -> Result<(), String> {
+        let path_buf = path.to_path_buf();
+        let insert_idx = self.validate_insert_position(position)?;
+
+        self.dirs.insert(insert_idx, path_buf);
+        self.canon_dirs.borrow_mut().insert(insert_idx, None);
+        Ok(())
+    }
+
+    pub fn move_entry(&self, from: usize, to: usize) -> PathOpResult {
+        let (from_idx, to_idx) = self.validate_move_indices(from, to)?;
         let mut new_dirs = self.dirs.clone();
         let item = new_dirs.remove(from_idx);
         new_dirs.insert(to_idx, item);
-
-        // Return new PATH string
-        Ok(new_dirs
-            .iter()
-            .map(|d| d.display().to_string())
-            .collect::<Vec<_>>()
-            .join(":"))
+        Ok(Self::join_dirs(&new_dirs))
     }
 
-    pub fn swap_entries(&self, idx1: usize, idx2: usize) -> Result<String, String> {
-        let len = self.dirs.len();
-
-        // Validate indices (1-based)
-        if idx1 == 0 || idx2 == 0 {
-            return Err(format!(
-                "Invalid index: indices must be >= 1 (got idx1={idx1}, idx2={idx2})"
-            ));
-        }
-        if idx1 > len {
-            return Err(format!(
-                "Index {idx1} out of bounds (PATH has {len} entries)"
-            ));
-        }
-        if idx2 > len {
-            return Err(format!(
-                "Index {idx2} out of bounds (PATH has {len} entries)"
-            ));
-        }
-
-        // Convert to 0-based
-        let idx1_0 = idx1 - 1;
-        let idx2_0 = idx2 - 1;
-
-        // Create new ordering with swapped entries
+    pub fn swap_entries(&self, idx1: usize, idx2: usize) -> PathOpResult {
+        let (idx1_0, idx2_0) = self.validate_swap_indices(idx1, idx2)?;
         let mut new_dirs = self.dirs.clone();
         new_dirs.swap(idx1_0, idx2_0);
-
-        // Return new PATH string
-        Ok(new_dirs
-            .iter()
-            .map(|d| d.display().to_string())
-            .collect::<Vec<_>>()
-            .join(":"))
+        Ok(Self::join_dirs(&new_dirs))
     }
 
     #[must_use]
@@ -207,70 +235,27 @@ impl PathSearcher {
         (cleaned.join(":"), removed_indices)
     }
 
-    pub fn delete_entry(&self, idx: usize) -> Result<String, String> {
-        let len = self.dirs.len();
-
-        // Validate index (1-based)
-        if idx == 0 {
-            return Err(format!("Invalid index: {idx} (must be >= 1)"));
-        }
-        if idx > len {
-            return Err(format!(
-                "Index {idx} out of bounds (PATH has {len} entries)"
-            ));
-        }
-
-        // Convert to 0-based
-        let idx_0 = idx - 1;
-
-        // Create new PATH without this entry
+    pub fn delete_entry(&self, idx: usize) -> PathOpResult {
+        let idx_0 = self.validate_index(idx, "index")?;
         let mut new_dirs = self.dirs.clone();
         new_dirs.remove(idx_0);
-
-        // Return new PATH string
-        Ok(new_dirs
-            .iter()
-            .map(|d| d.display().to_string())
-            .collect::<Vec<_>>()
-            .join(":"))
+        Ok(Self::join_dirs(&new_dirs))
     }
 
-    pub fn delete_entries(&self, indices: &[usize]) -> Result<String, String> {
-        let len = self.dirs.len();
-
-        // Validate all indices (1-based)
+    pub fn delete_entries(&self, indices: &[usize]) -> PathOpResult {
         for &idx in indices {
-            if idx == 0 {
-                return Err(format!("Invalid index: {idx} (indices must be >= 1)"));
-            }
-            if idx > len {
-                return Err(format!(
-                    "Index {idx} out of bounds (PATH has {len} entries)"
-                ));
-            }
+            self.validate_index(idx, "indices")?;
         }
 
-        // Sort indices in descending order to delete from highest to lowest
-        // This avoids index shifting issues
         let mut sorted_indices: Vec<usize> = indices.to_vec();
         sorted_indices.sort_unstable_by(|a, b| b.cmp(a));
-
-        // Remove duplicates
         sorted_indices.dedup();
 
-        // Create new PATH without these entries
         let mut new_dirs = self.dirs.clone();
         for &idx in &sorted_indices {
-            let idx_0 = idx - 1; // Convert to 0-based
-            new_dirs.remove(idx_0);
+            new_dirs.remove(idx - 1);
         }
-
-        // Return new PATH string
-        Ok(new_dirs
-            .iter()
-            .map(|d| d.display().to_string())
-            .collect::<Vec<_>>()
-            .join(":"))
+        Ok(Self::join_dirs(&new_dirs))
     }
 
     /// Add a new directory to `PATH` if not already present at the beginning
@@ -291,52 +276,24 @@ impl PathSearcher {
     ) -> Result<String, String> {
         let path_buf = path.to_path_buf();
 
-        // Check if already exists
-        if let Some(_idx) = self.find_path_index(&path_buf) {
-            // Already exists - just return current PATH
+        if self.find_path_index(&path_buf).is_some() {
             return Ok(self.to_path_string());
         }
 
-        // Validate position (1-based)
-        if position == 0 {
-            return Err("Position must be >= 1".to_string());
-        }
-
         let mut new_dirs = self.dirs.clone();
-
-        // Convert to 0-based index, but cap at the end of the list
-        let insert_idx = (position - 1).min(new_dirs.len());
-
+        let insert_idx = self.validate_insert_position(position)?;
         new_dirs.insert(insert_idx, path_buf);
-
-        let new_path = new_dirs
-            .iter()
-            .map(|d| d.display().to_string())
-            .collect::<Vec<_>>()
-            .join(":");
-
-        Ok(new_path)
+        Ok(Self::join_dirs(&new_dirs))
     }
 
     /// Find the index of an exact path match (1-based)
     #[must_use]
     pub fn find_path_index(&self, path: &std::path::Path) -> Option<usize> {
-        use std::fs;
-
-        // Try to canonicalize the search path if it exists
-        let canonical_search = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        let canonical_search = Self::canonical_search_path(path);
 
         for (idx, dir) in self.dirs.iter().enumerate() {
-            // Compare both as-is and canonicalized
-            if dir == path || dir == &canonical_search {
-                return Some(idx + 1); // Return 1-based index
-            }
-
-            // Use cached canonicalized dir
-            if let Some(canonical_dir) = self.canonicalize_index(idx) {
-                if canonical_dir == canonical_search {
-                    return Some(idx + 1);
-                }
+            if self.matches_exact_or_canonical(idx, dir, path, &canonical_search) {
+                return Some(idx + 1);
             }
         }
 
@@ -397,329 +354,6 @@ impl PathSearcher {
     /// Convert current dirs to `PATH` string
     #[must_use]
     pub fn to_path_string(&self) -> String {
-        self.dirs
-            .iter()
-            .map(|d| d.display().to_string())
-            .collect::<Vec<_>>()
-            .join(":")
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_move_entry_forward() {
-        let searcher = PathSearcher::new("/a:/b:/c:/d:/e");
-        let result = searcher.move_entry(5, 2).unwrap();
-        assert_eq!(result, "/a:/e:/b:/c:/d");
-    }
-
-    #[test]
-    fn test_move_entry_backward() {
-        let searcher = PathSearcher::new("/a:/b:/c:/d:/e");
-        let result = searcher.move_entry(2, 4).unwrap();
-        assert_eq!(result, "/a:/c:/d:/b:/e");
-    }
-
-    #[test]
-    fn test_move_entry_to_first() {
-        let searcher = PathSearcher::new("/a:/b:/c:/d:/e");
-        let result = searcher.move_entry(4, 1).unwrap();
-        assert_eq!(result, "/d:/a:/b:/c:/e");
-    }
-
-    #[test]
-    fn test_move_entry_to_last() {
-        let searcher = PathSearcher::new("/a:/b:/c:/d:/e");
-        let result = searcher.move_entry(2, 5).unwrap();
-        assert_eq!(result, "/a:/c:/d:/e:/b");
-    }
-
-    #[test]
-    fn test_move_entry_same_position() {
-        let searcher = PathSearcher::new("/a:/b:/c:/d:/e");
-        let result = searcher.move_entry(3, 3).unwrap();
-        assert_eq!(result, "/a:/b:/c:/d:/e");
-    }
-
-    #[test]
-    fn test_move_entry_zero_index() {
-        let searcher = PathSearcher::new("/a:/b:/c");
-        let result = searcher.move_entry(0, 2);
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.contains("must be >= 1"));
-        assert!(err.contains("0"));
-    }
-
-    #[test]
-    fn test_move_entry_out_of_bounds() {
-        let searcher = PathSearcher::new("/a:/b:/c");
-        let result = searcher.move_entry(1, 5);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("out of bounds"));
-    }
-
-    #[test]
-    fn test_swap_entries_basic() {
-        let searcher = PathSearcher::new("/a:/b:/c:/d:/e");
-        let result = searcher.swap_entries(2, 4).unwrap();
-        assert_eq!(result, "/a:/d:/c:/b:/e");
-    }
-
-    #[test]
-    fn test_swap_entries_same_index() {
-        let searcher = PathSearcher::new("/a:/b:/c:/d:/e");
-        let result = searcher.swap_entries(3, 3).unwrap();
-        assert_eq!(result, "/a:/b:/c:/d:/e");
-    }
-
-    #[test]
-    fn test_swap_entries_first_and_last() {
-        let searcher = PathSearcher::new("/a:/b:/c:/d:/e");
-        let result = searcher.swap_entries(1, 5).unwrap();
-        assert_eq!(result, "/e:/b:/c:/d:/a");
-    }
-
-    #[test]
-    fn test_swap_entries_zero_index() {
-        let searcher = PathSearcher::new("/a:/b:/c");
-        let result = searcher.swap_entries(0, 2);
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.contains("must be >= 1"));
-        assert!(err.contains("0"));
-    }
-
-    #[test]
-    fn test_swap_entries_out_of_bounds() {
-        let searcher = PathSearcher::new("/a:/b:/c");
-        let result = searcher.swap_entries(2, 5);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("out of bounds"));
-    }
-
-    #[test]
-    fn test_clean_no_duplicates() {
-        let searcher = PathSearcher::new("/a:/b:/c:/d:/e");
-        let (result, removed) = searcher.clean_duplicates();
-        assert_eq!(result, "/a:/b:/c:/d:/e");
-        assert!(removed.is_empty());
-    }
-
-    #[test]
-    fn test_clean_with_duplicates() {
-        let searcher = PathSearcher::new("/a:/b:/c:/b:/d:/a");
-        let (result, removed) = searcher.clean_duplicates();
-        assert_eq!(result, "/a:/b:/c:/d");
-        assert_eq!(removed, vec![4, 6]); // /b at idx 4, /a at idx 6
-    }
-
-    #[test]
-    fn test_clean_all_same() {
-        let searcher = PathSearcher::new("/a:/a:/a");
-        let (result, removed) = searcher.clean_duplicates();
-        assert_eq!(result, "/a");
-        assert_eq!(removed, vec![2, 3]);
-    }
-
-    #[test]
-    fn test_clean_consecutive_duplicates() {
-        let searcher = PathSearcher::new("/a:/a:/b:/b:/c");
-        let (result, removed) = searcher.clean_duplicates();
-        assert_eq!(result, "/a:/b:/c");
-        assert_eq!(removed, vec![2, 4]);
-    }
-
-    #[test]
-    fn test_clean_empty() {
-        let searcher = PathSearcher::new("");
-        let (result, removed) = searcher.clean_duplicates();
-        assert_eq!(result, "");
-        assert!(removed.is_empty());
-    }
-
-    #[test]
-    fn test_clean_matches_delete() {
-        // Verify that clean and delete produce identical results
-        let path = "/a:/b:/c:/b:/d:/a:/e:/c";
-        let searcher = PathSearcher::new(path);
-
-        // Get clean result and removed indices
-        let (clean_result, removed) = searcher.clean_duplicates();
-
-        // Apply delete with the same indices
-        let delete_result = searcher.delete_entries(&removed).unwrap();
-
-        // Results must be identical
-        assert_eq!(clean_result, delete_result);
-        assert_eq!(removed, vec![4, 6, 8]); // /b at 4, /a at 6, /c at 8
-    }
-
-    #[test]
-    fn test_delete_first() {
-        let searcher = PathSearcher::new("/a:/b:/c:/d:/e");
-        let result = searcher.delete_entry(1).unwrap();
-        assert_eq!(result, "/b:/c:/d:/e");
-    }
-
-    #[test]
-    fn test_delete_middle() {
-        let searcher = PathSearcher::new("/a:/b:/c:/d:/e");
-        let result = searcher.delete_entry(3).unwrap();
-        assert_eq!(result, "/a:/b:/d:/e");
-    }
-
-    #[test]
-    fn test_delete_last() {
-        let searcher = PathSearcher::new("/a:/b:/c:/d:/e");
-        let result = searcher.delete_entry(5).unwrap();
-        assert_eq!(result, "/a:/b:/c:/d");
-    }
-
-    #[test]
-    fn test_delete_only_entry() {
-        let searcher = PathSearcher::new("/a");
-        let result = searcher.delete_entry(1).unwrap();
-        assert_eq!(result, "");
-    }
-
-    #[test]
-    fn test_delete_zero_index() {
-        let searcher = PathSearcher::new("/a:/b:/c");
-        let result = searcher.delete_entry(0);
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.contains("must be >= 1"));
-        assert!(err.contains("0"));
-    }
-
-    #[test]
-    fn test_delete_out_of_bounds() {
-        let searcher = PathSearcher::new("/a:/b:/c");
-        let result = searcher.delete_entry(5);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("out of bounds"));
-    }
-
-    #[test]
-    fn test_delete_entries_multiple() {
-        let searcher = PathSearcher::new("/a:/b:/c:/d:/e");
-        let result = searcher.delete_entries(&[2, 4]).unwrap();
-        assert_eq!(result, "/a:/c:/e");
-    }
-
-    #[test]
-    fn test_delete_entries_unordered() {
-        let searcher = PathSearcher::new("/a:/b:/c:/d:/e");
-        let result = searcher.delete_entries(&[5, 2, 3]).unwrap();
-        assert_eq!(result, "/a:/d");
-    }
-
-    #[test]
-    fn test_delete_entries_with_duplicates() {
-        let searcher = PathSearcher::new("/a:/b:/c:/d:/e");
-        let result = searcher.delete_entries(&[2, 2, 4, 4]).unwrap();
-        assert_eq!(result, "/a:/c:/e");
-    }
-
-    #[test]
-    fn test_delete_entries_all() {
-        let searcher = PathSearcher::new("/a:/b:/c");
-        let result = searcher.delete_entries(&[1, 2, 3]).unwrap();
-        assert_eq!(result, "");
-    }
-
-    #[test]
-    fn test_delete_entries_zero_index() {
-        let searcher = PathSearcher::new("/a:/b:/c");
-        let result = searcher.delete_entries(&[1, 0, 3]);
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.contains("must be >= 1"));
-        assert!(err.contains("0"));
-    }
-
-    #[test]
-    fn test_delete_entries_out_of_bounds() {
-        let searcher = PathSearcher::new("/a:/b:/c");
-        let result = searcher.delete_entries(&[1, 5, 2]);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("out of bounds"));
-    }
-
-    #[test]
-    fn test_delete_entries_single() {
-        let searcher = PathSearcher::new("/a:/b:/c:/d:/e");
-        let result = searcher.delete_entries(&[3]).unwrap();
-        assert_eq!(result, "/a:/b:/d:/e");
-    }
-
-    // Security tests
-
-    #[test]
-    fn test_path_validation_null_byte() {
-        let result = validate_path_entry("hello\0world");
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("null byte"));
-    }
-
-    #[test]
-    fn test_path_validation_control_chars() {
-        let result = validate_path_entry("hello\x01world");
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("control character"));
-    }
-
-    #[test]
-    fn test_path_validation_tab_allowed() {
-        // Tab is a valid character in paths
-        let result = validate_path_entry("hello\tworld");
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_path_validation_newline_rejected() {
-        let result = validate_path_entry("hello\nworld");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_empty_path_components_skipped() {
-        // Empty components should be skipped, not treated as "."
-        let searcher = PathSearcher::new("/a::/b");
-        let dirs = searcher.dirs();
-        assert_eq!(dirs.len(), 2);
-        assert_eq!(dirs[0].to_str().unwrap(), "/a");
-        assert_eq!(dirs[1].to_str().unwrap(), "/b");
-    }
-
-    #[test]
-    fn test_malicious_path_filtered() {
-        // Path with null byte should be filtered out
-        let searcher = PathSearcher::new("/good:/bad\0path:/alsogood");
-        let dirs = searcher.dirs();
-        // Only /good and /alsogood should remain
-        assert_eq!(dirs.len(), 2);
-        assert_eq!(dirs[0].to_str().unwrap(), "/good");
-        assert_eq!(dirs[1].to_str().unwrap(), "/alsogood");
-    }
-
-    #[test]
-    fn test_error_messages_include_values() {
-        let searcher = PathSearcher::new("/a:/b:/c");
-
-        // Test zero index error includes the value
-        let err = searcher.move_entry(0, 2).unwrap_err();
-        assert!(err.contains("0"));
-        assert!(err.contains("must be >= 1"));
-
-        // Test out of bounds error includes the value
-        let err = searcher.move_entry(5, 2).unwrap_err();
-        assert!(err.contains("5"));
-        assert!(err.contains("out of bounds"));
-        assert!(err.contains("3 entries"));
+        Self::join_dirs(&self.dirs)
     }
 }

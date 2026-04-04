@@ -2,13 +2,13 @@ use std::process;
 
 use clap::{Args as ClapArgs, CommandFactory, Parser, Subcommand, ValueEnum};
 
-use crate::cli::{self, Args as AppArgs, ColorWhen};
+use crate::cli::{self, ApplyTarget, Args as AppArgs, ColorWhen, HistoryAction, PathEdit};
 use crate::commands;
 use crate::config::{protected_paths, runtime, shell_paths};
+use crate::path::PathSearcher;
 use crate::path::file::{apply_path_sections, expand_shell_vars};
 use crate::path::guard::PathGuard;
 use crate::path::resolve::resolve_path;
-use crate::path::PathSearcher;
 use crate::session::history::HistoryContext;
 use crate::session::store;
 use crate::shell::detect::Shell;
@@ -31,8 +31,28 @@ struct Cli {
 }
 
 #[derive(ClapArgs, Debug, Default)]
-#[allow(clippy::struct_excessive_bools)]
 struct QueryArgs {
+    #[command(flatten)]
+    listing: QueryListingArgs,
+
+    #[command(flatten)]
+    output: QueryOutputArgs,
+
+    #[command(flatten)]
+    mode: QueryModeArgs,
+
+    #[arg(long = "path")]
+    path_override: Option<String>,
+
+    #[arg(long = "color")]
+    color: Option<ColorChoice>,
+
+    #[arg(value_name = "NAME")]
+    names: Vec<String>,
+}
+
+#[derive(ClapArgs, Debug, Default)]
+struct QueryListingArgs {
     #[arg(short = 'a', long = "all")]
     all: bool,
 
@@ -42,6 +62,15 @@ struct QueryArgs {
     #[arg(short = 'l', long = "follow-symlinks", visible_alias = "L")]
     follow_symlinks: bool,
 
+    #[arg(short = '1', long = "one")]
+    one: bool,
+
+    #[arg(long = "show-nonexec", alias = "nonexec")]
+    show_nonexec: bool,
+}
+
+#[derive(ClapArgs, Debug, Default)]
+struct QueryOutputArgs {
     #[arg(short = '0', long = "print0")]
     print0: bool,
 
@@ -51,29 +80,17 @@ struct QueryArgs {
     #[arg(long = "silent")]
     silent: bool,
 
-    #[arg(short = '1', long = "one")]
-    one: bool,
-
-    #[arg(long = "show-nonexec", alias = "nonexec")]
-    show_nonexec: bool,
-
-    #[arg(long = "path")]
-    path_override: Option<String>,
-
-    #[arg(long = "color")]
-    color: Option<ColorChoice>,
-
     #[arg(short = 's', long = "stat")]
     stat: bool,
 
     #[arg(short = 'n', long = "no-index")]
     no_index: bool,
+}
 
+#[derive(ClapArgs, Debug, Default)]
+struct QueryModeArgs {
     #[arg(short = 'x', long = "swap-fuzzy-exact")]
     swap_fuzzy: bool,
-
-    #[arg(value_name = "NAME")]
-    names: Vec<String>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -324,7 +341,7 @@ pub fn run() -> i32 {
         eprintln!("Warning: Failed to create protected_paths file: {e}");
     }
 
-    let exit_code = match command {
+    match command {
         Some(Command::Diff(diff)) => run_diff(diff),
         Some(Command::Apply(apply)) => run_apply(apply),
         Some(Command::Help) => run_help(),
@@ -358,9 +375,7 @@ pub fn run() -> i32 {
         Some(Command::HiddenAdd(add_args)) => run_hidden_add(&add_args),
         Some(Command::Shorthands) => run_shorthands(),
         None => run_query(query),
-    };
-
-    exit_code
+    }
 }
 
 /// Check if shell integration is loaded, return error code if not
@@ -381,19 +396,19 @@ fn run_query(opts: QueryArgs) -> i32 {
 
     let args = AppArgs {
         names: opts.names,
-        all: opts.all,
-        full: opts.full,
-        follow_symlinks: opts.follow_symlinks,
-        print0: opts.print0,
-        quiet: opts.quiet,
-        silent: opts.silent,
-        one: opts.one,
-        show_nonexec: opts.show_nonexec,
+        all: opts.listing.all,
+        full: opts.listing.full,
+        follow_symlinks: opts.listing.follow_symlinks,
+        print0: opts.output.print0,
+        quiet: opts.output.quiet,
+        silent: opts.output.silent,
+        one: opts.listing.one,
+        show_nonexec: opts.listing.show_nonexec,
         path_override: opts.path_override,
         color: opts.color.unwrap_or(ColorChoice::Auto).into(),
-        stat: opts.stat,
-        no_index: opts.no_index,
-        swap_fuzzy: opts.swap_fuzzy,
+        stat: opts.output.stat,
+        no_index: opts.output.no_index,
+        swap_fuzzy: opts.mode.swap_fuzzy,
         ..Default::default()
     };
 
@@ -434,7 +449,10 @@ fn run_apply(opts: ApplyArgs) -> i32 {
     }
 
     let args = AppArgs {
-        apply_shell: Some(opts.shell),
+        apply_target: Some(match opts.shell {
+            Some(shell) => ApplyTarget::Shell(shell),
+            None => ApplyTarget::CurrentShell,
+        }),
         no_protect: opts.no_protect,
         ..Default::default()
     };
@@ -497,14 +515,20 @@ fn run_init(opts: InitArgs) -> i32 {
 }
 
 fn run_help() -> i32 {
-    Cli::command().print_help().ok();
+    if let Err(err) = Cli::command().print_help() {
+        eprintln!("Error: Failed to print help: {err}");
+        return 2;
+    }
     println!();
     0
 }
 
 fn run_hidden_move(opts: &HiddenMoveArgs) -> i32 {
     let args = AppArgs {
-        move_indices: Some((opts.from, opts.to)),
+        path_edit: Some(PathEdit::Move {
+            from: opts.from,
+            to: opts.to,
+        }),
         ..Default::default()
     };
     commands::run(&args)
@@ -512,7 +536,10 @@ fn run_hidden_move(opts: &HiddenMoveArgs) -> i32 {
 
 fn run_hidden_swap(opts: &HiddenSwapArgs) -> i32 {
     let args = AppArgs {
-        swap_indices: Some((opts.first, opts.second)),
+        path_edit: Some(PathEdit::Swap {
+            first: opts.first,
+            second: opts.second,
+        }),
         ..Default::default()
     };
     commands::run(&args)
@@ -572,7 +599,7 @@ fn run_hidden_reset() -> i32 {
 
 fn run_hidden_undo(opts: &HiddenUndoArgs) -> i32 {
     let args = AppArgs {
-        undo_count: Some(opts.count),
+        history_action: Some(HistoryAction::Undo(opts.count)),
         ..Default::default()
     };
     commands::run(&args)
@@ -580,23 +607,18 @@ fn run_hidden_undo(opts: &HiddenUndoArgs) -> i32 {
 
 fn run_hidden_redo(opts: &HiddenRedoArgs) -> i32 {
     let args = AppArgs {
-        redo_count: Some(opts.count),
+        history_action: Some(HistoryAction::Redo(opts.count)),
         ..Default::default()
     };
     commands::run(&args)
 }
 
 fn run_hidden_load(opts: &HiddenLoadArgs) -> i32 {
-    use std::env;
-
-    let session_pid = env::var("WHI_SESSION_PID")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or_else(std::process::id);
+    let session_pid = current_session_pid();
 
     match shell_paths::load_profile(&opts.name) {
         Ok(parsed) => {
-            let current_path = env::var("PATH").unwrap_or_default();
+            let current_path = std::env::var("PATH").unwrap_or_default();
             let computed_path = match apply_path_sections(&current_path, &parsed.path) {
                 Ok(path) => path,
                 Err(e) => {
@@ -611,8 +633,10 @@ fn run_hidden_load(opts: &HiddenLoadArgs) -> i32 {
                 .collect::<Vec<_>>()
                 .join(":");
 
-            if let Ok(history) = HistoryContext::global(session_pid) {
-                let _ = history.write_snapshot(&expanded_path);
+            if let Ok(history) = HistoryContext::global(session_pid)
+                && let Err(err) = history.write_snapshot(&expanded_path)
+            {
+                eprintln!("Warning: Failed to write profile snapshot: {err}");
             }
 
             let guarded_path =
@@ -629,9 +653,7 @@ fn run_hidden_load(opts: &HiddenLoadArgs) -> i32 {
 }
 
 fn run_hidden_init(args: &HiddenInitArgs) -> i32 {
-    use std::env;
-
-    let path_var = env::var("PATH").unwrap_or_default();
+    let path_var = std::env::var("PATH").unwrap_or_default();
     let session_pid = args.session_pid;
 
     match HistoryContext::global(session_pid) {
@@ -641,7 +663,9 @@ fn run_hidden_init(args: &HiddenInitArgs) -> i32 {
                 return 2;
             }
 
-            let _ = store::cleanup_old_sessions();
+            if let Err(err) = store::cleanup_old_sessions() {
+                eprintln!("Warning: Failed to clean up old sessions: {err}");
+            }
 
             0
         }
@@ -680,13 +704,9 @@ fn run_hidden_load_saved_path(args: &HiddenLoadSavedPathArgs) -> i32 {
 }
 
 fn run_hidden_add(args: &HiddenAddArgs) -> i32 {
-    use std::env;
     use std::path::PathBuf;
 
-    let session_pid = env::var("WHI_SESSION_PID")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or_else(std::process::id);
+    let session_pid = current_session_pid();
 
     // Parse paths from arguments
     let paths = match cli::parse_add_arguments(args.paths.clone()) {
@@ -698,11 +718,11 @@ fn run_hidden_add(args: &HiddenAddArgs) -> i32 {
     };
 
     // Get current PATH and create searcher once
-    let current_path = env::var("PATH").unwrap_or_default();
+    let current_path = std::env::var("PATH").unwrap_or_default();
     let mut searcher = PathSearcher::new(&current_path);
 
     // Resolve and add each path (prepend if not already in PATH)
-    let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
     for path_str in paths {
         let resolved = match resolve_path(&path_str, &cwd) {
@@ -727,8 +747,10 @@ fn run_hidden_add(args: &HiddenAddArgs) -> i32 {
 
     let new_path = searcher.to_path_string();
 
-    if let Ok(history) = HistoryContext::global(session_pid) {
-        let _ = history.write_snapshot(&new_path);
+    if let Ok(history) = HistoryContext::global(session_pid)
+        && let Err(err) = history.write_snapshot(&new_path)
+    {
+        eprintln!("Warning: Failed to write PATH snapshot: {err}");
     }
 
     // Apply path guard to preserve critical binaries (whi, zoxide)
@@ -820,4 +842,11 @@ fn run_shorthands() -> i32 {
     println!();
 
     0
+}
+
+fn current_session_pid() -> u32 {
+    std::env::var("WHI_SESSION_PID")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or_else(std::process::id)
 }

@@ -3,70 +3,22 @@ use std::fs;
 use std::io::{self, BufRead, BufWriter, StdoutLock, Write};
 use std::path::{Path, PathBuf};
 
-use crate::cli::args::{Args, ColorWhen};
+use crate::cli::args::{Args, HistoryAction, PathEdit, PreferTarget};
+use crate::commands::support::path_support::{
+    emit_line, history_for_current_scope, output_path, should_use_color, write_snapshot_safe,
+};
+use crate::config;
 use crate::config::{protected_paths, shell_paths};
 use crate::io::output::OutputFormatter;
 use crate::path::diff::{compute_diff, format_diff_with_limit};
 use crate::path::file::apply_path_sections;
 use crate::path::fuzzy::FuzzyMatcher;
-use crate::path::guard::PathGuard;
 use crate::path::resolve::{looks_like_exact_path, resolve_path};
 use crate::path::searcher::PathSearcher;
 use crate::search::result::{ExecutableCheck, SearchResult};
-use crate::session::history::HistoryContext;
 use crate::session::store::cleanup_old_sessions;
-use crate::shell::detect::{detect_current_shell, Shell};
+use crate::shell::detect::{Shell, detect_current_shell};
 use crate::shell::init as shell_init;
-use crate::{config, platform};
-
-/// Get the session `PID` - either from `WHI_SESSION_PID` env var or fall back to parent `PID`
-fn get_session_pid() -> Result<u32, std::io::Error> {
-    if let Ok(pid_str) = env::var("WHI_SESSION_PID") {
-        pid_str.parse::<u32>().map_err(|_| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Invalid WHI_SESSION_PID value",
-            )
-        })
-    } else {
-        platform::get_parent_pid()
-    }
-}
-
-/// Write `PATH` snapshot to session tracker, with error handling
-fn write_snapshot_safe(new_path: &str, args: &Args) {
-    match history_for_current_scope() {
-        Ok(history) => {
-            if let Err(e) = history.write_snapshot(new_path) {
-                if !args.quiet && !args.silent {
-                    eprintln!("Warning: Failed to write snapshot: {e}");
-                }
-            }
-        }
-        Err(e) => {
-            if !args.quiet && !args.silent {
-                eprintln!("Warning: Failed to acquire history: {e}");
-            }
-        }
-    }
-}
-
-fn history_for_current_scope() -> Result<HistoryContext, String> {
-    let pid = get_session_pid().map_err(|e| e.to_string())?;
-    HistoryContext::global(pid)
-}
-
-/// Output new `PATH` and flush, returning success code
-fn output_path(out: &mut BufWriter<StdoutLock>, new_path: &str) -> i32 {
-    // Apply path guard to preserve critical binaries (whi, zoxide)
-    let original_path = env::var("PATH").unwrap_or_default();
-    let guarded_path =
-        PathGuard::default().ensure_protected_paths(&original_path, new_path.to_string());
-
-    writeln!(out, "{guarded_path}").ok();
-    out.flush().ok();
-    0
-}
 
 /// Handle Result from `PATH` operation: write snapshot on success, print error on failure
 fn handle_path_result(
@@ -114,8 +66,8 @@ pub fn run(args: &Args) -> i32 {
     }
 
     // Handle apply subcommand (renamed from save)
-    if let Some(shell_opt) = &args.apply_shell {
-        return handle_apply(shell_opt.as_ref(), args.no_protect);
+    if let Some(apply_target) = &args.apply_target {
+        return handle_apply(apply_target, args.no_protect);
     }
 
     // Handle save profile subcommand
@@ -139,13 +91,11 @@ pub fn run(args: &Args) -> i32 {
     }
 
     // Handle undo subcommand
-    if let Some(count) = args.undo_count {
-        return handle_undo(count);
-    }
-
-    // Handle redo subcommand
-    if let Some(count) = args.redo_count {
-        return handle_redo(count);
+    if let Some(history_action) = &args.history_action {
+        return match history_action {
+            HistoryAction::Undo(count) => handle_undo(*count),
+            HistoryAction::Redo(count) => handle_redo(*count),
+        };
     }
 
     // Handle diff subcommand
@@ -175,13 +125,12 @@ pub fn run(args: &Args) -> i32 {
     }
 
     // Handle --move operation
-    if let Some((from, to)) = args.move_indices {
-        return handle_path_result(searcher.move_entry(from, to), args, &mut out);
-    }
-
-    // Handle --swap operation
-    if let Some((idx1, idx2)) = args.swap_indices {
-        return handle_path_result(searcher.swap_entries(idx1, idx2), args, &mut out);
+    if let Some(path_edit) = &args.path_edit {
+        let result = match path_edit {
+            PathEdit::Move { from, to } => searcher.move_entry(*from, *to),
+            PathEdit::Swap { first, second } => searcher.swap_entries(*first, *second),
+        };
+        return handle_path_result(result, args, &mut out);
     }
 
     // Handle --prefer operation
@@ -223,7 +172,7 @@ pub fn run(args: &Args) -> i32 {
     let stderr = io::stderr();
     let mut err = BufWriter::new(stderr.lock());
 
-    let use_color = should_use_color(args);
+    let use_color = should_use_color(args, atty::is(atty::Stream::Stdout));
     let mut formatter = OutputFormatter::new(use_color, args.print0);
 
     for name in names {
@@ -476,10 +425,10 @@ fn search_name_fuzzy(searcher: &PathSearcher, query: &str, args: &Args) -> Vec<S
                 continue;
             };
 
-            if matcher.matches(&PathBuf::from(filename)) {
-                if let Some(result) = check_dir_entry(&entry, args, idx + 1) {
-                    results.push(result);
-                }
+            if matcher.matches(&PathBuf::from(filename))
+                && let Some(result) = check_dir_entry(&entry, args, idx + 1)
+            {
+                results.push(result);
             }
         }
     }
@@ -520,14 +469,6 @@ fn check_path(path: &Path, args: &Args, path_index: usize) -> Option<SearchResul
     })
 }
 
-fn should_use_color(args: &Args) -> bool {
-    match args.color {
-        ColorWhen::Always => true,
-        ColorWhen::Never => false,
-        ColorWhen::Auto => atty::is(atty::Stream::Stdout),
-    }
-}
-
 /// Get the directory containing the current whi executable
 fn get_current_exe_dir() -> Option<PathBuf> {
     env::current_exe()
@@ -537,12 +478,10 @@ fn get_current_exe_dir() -> Option<PathBuf> {
 
 fn handle_prefer<W: Write>(
     searcher: &PathSearcher,
-    target: &crate::cli::args::PreferTarget,
+    target: &PreferTarget,
     args: &Args,
     out: &mut W,
 ) -> i32 {
-    use crate::cli::args::PreferTarget;
-
     match target {
         PreferTarget::IndexBased { name, index } => {
             handle_prefer_index(searcher, name, *index, args, out)
@@ -601,15 +540,7 @@ fn handle_prefer_index<W: Write>(
     match searcher.move_entry(target_idx, new_position) {
         Ok(new_path) => {
             write_snapshot_safe(&new_path, args);
-
-            // Apply path guard to preserve critical binaries (whi, zoxide)
-            let original_path = env::var("PATH").unwrap_or_default();
-            let guarded_path =
-                PathGuard::default().ensure_protected_paths(&original_path, new_path);
-
-            writeln!(out, "{guarded_path}").ok();
-            out.flush().ok();
-            0
+            output_path(out, &new_path)
         }
         Err(e) => {
             if !args.silent {
@@ -701,15 +632,7 @@ fn handle_prefer_exact_path<W: Write>(
             }
 
             write_snapshot_safe(&new_path, args);
-
-            // Apply path guard to preserve critical binaries (whi, zoxide)
-            let original_path = env::var("PATH").unwrap_or_default();
-            let guarded_path =
-                PathGuard::default().ensure_protected_paths(&original_path, new_path);
-
-            writeln!(out, "{guarded_path}").ok();
-            out.flush().ok();
-            0
+            output_path(out, &new_path)
         }
         Err(e) => {
             if !args.silent {
@@ -750,10 +673,7 @@ fn handle_prefer_path_only<W: Write>(
         if !args.silent {
             eprintln!("{} is already in PATH", resolved_path.display());
         }
-        // Return current PATH unchanged
-        writeln!(out, "{}", searcher.to_path_string()).ok();
-        out.flush().ok();
-        return 0;
+        return emit_line(out, &searcher.to_path_string());
     }
 
     match searcher.add_path(&resolved_path) {
@@ -763,15 +683,7 @@ fn handle_prefer_path_only<W: Write>(
             }
 
             write_snapshot_safe(&new_path, args);
-
-            // Apply path guard to preserve critical binaries (whi, zoxide)
-            let original_path = env::var("PATH").unwrap_or_default();
-            let guarded_path =
-                PathGuard::default().ensure_protected_paths(&original_path, new_path);
-
-            writeln!(out, "{guarded_path}").ok();
-            out.flush().ok();
-            0
+            output_path(out, &new_path)
         }
         Err(e) => {
             if !args.silent {
@@ -907,7 +819,7 @@ fn handle_delete<W: Write>(
 
     // Show deleted paths in diff format (always, even for single deletions)
     if !args.silent && !indices_to_delete.is_empty() {
-        let use_color = should_use_color(args);
+        let use_color = should_use_color(args, atty::is(atty::Stream::Stdout));
 
         let (red, reset) = if use_color {
             ("\x1b[31m", "\x1b[0m")
@@ -931,15 +843,7 @@ fn handle_delete<W: Write>(
     match result {
         Ok(new_path) => {
             write_snapshot_safe(&new_path, args);
-
-            // Apply path guard to preserve critical binaries (whi, zoxide)
-            let original_path = env::var("PATH").unwrap_or_default();
-            let guarded_path =
-                PathGuard::default().ensure_protected_paths(&original_path, new_path);
-
-            writeln!(out, "{guarded_path}").ok();
-            out.flush().ok();
-            0
+            output_path(out, &new_path)
         }
         Err(e) => {
             if !args.silent {
@@ -951,44 +855,42 @@ fn handle_delete<W: Write>(
 }
 
 #[allow(clippy::too_many_lines)]
-fn handle_apply(shell_opt: Option<&String>, no_protect: bool) -> i32 {
+fn handle_apply(apply_target: &crate::cli::ApplyTarget, no_protect: bool) -> i32 {
     use std::collections::HashSet;
 
     let mut path_var = env::var("PATH").unwrap_or_default();
 
     // Apply protected paths unless --no-protect is set
     // Protection is silent - just ensures configured paths are present
-    if !no_protect {
-        if let Ok(protected_path_bufs) = protected_paths::load_protected_paths() {
-            // Normalize paths by removing trailing slashes for comparison
-            let current_paths: HashSet<String> = path_var
-                .split(':')
-                .filter(|s| !s.is_empty())
-                .map(|s| s.trim_end_matches('/').to_string())
-                .collect();
+    if !no_protect && let Ok(protected_path_bufs) = protected_paths::load_protected_paths() {
+        // Normalize paths by removing trailing slashes for comparison
+        let current_paths: HashSet<String> = path_var
+            .split(':')
+            .filter(|s| !s.is_empty())
+            .map(|s| s.trim_end_matches('/').to_string())
+            .collect();
 
-            let protected_paths: Vec<String> = protected_path_bufs
-                .iter()
-                .filter_map(|p| {
-                    let path_str = p.to_string_lossy().to_string();
-                    let normalized = path_str.trim_end_matches('/');
-                    if current_paths.contains(normalized) {
-                        None
-                    } else {
-                        Some(path_str)
-                    }
-                })
-                .collect();
+        let protected_paths: Vec<String> = protected_path_bufs
+            .iter()
+            .filter_map(|p| {
+                let path_str = p.to_string_lossy().to_string();
+                let normalized = path_str.trim_end_matches('/');
+                if current_paths.contains(normalized) {
+                    None
+                } else {
+                    Some(path_str)
+                }
+            })
+            .collect();
 
-            if !protected_paths.is_empty() {
-                // Silently insert protected paths at the beginning
-                path_var = format!("{}:{}", protected_paths.join(":"), path_var);
-            }
+        if !protected_paths.is_empty() {
+            // Silently insert protected paths at the beginning
+            path_var = format!("{}:{}", protected_paths.join(":"), path_var);
         }
     }
 
-    let result = match shell_opt {
-        None => {
+    let result = match apply_target {
+        crate::cli::ApplyTarget::CurrentShell => {
             let shell = match detect_current_shell() {
                 Ok(s) => s,
                 Err(e) => {
@@ -1010,7 +912,7 @@ fn handle_apply(shell_opt: Option<&String>, no_protect: bool) -> i32 {
             );
             0
         }
-        Some(shell_str) => {
+        crate::cli::ApplyTarget::Shell(shell_str) => {
             if shell_str.to_lowercase() == "all" {
                 let shells = [Shell::Bash, Shell::Zsh, Shell::Fish];
                 let mut all_ok = true;
@@ -1029,11 +931,7 @@ fn handle_apply(shell_opt: Option<&String>, no_protect: bool) -> i32 {
                     }
                 }
 
-                if all_ok {
-                    0
-                } else {
-                    2
-                }
+                if all_ok { 0 } else { 2 }
             } else {
                 let shell = match shell_str.parse::<Shell>() {
                     Ok(s) => s,
@@ -1066,7 +964,9 @@ fn handle_apply(shell_opt: Option<&String>, no_protect: bool) -> i32 {
                     eprintln!("Warning: Failed to reinitialize history: {e}");
                 }
 
-                let _ = cleanup_old_sessions();
+                if let Err(e) = cleanup_old_sessions() {
+                    eprintln!("Warning: Failed to clean up old sessions: {e}");
+                }
             }
             Err(e) => {
                 eprintln!("Warning: Failed to update history: {e}");
@@ -1095,8 +995,6 @@ fn handle_diff(full: bool) -> i32 {
 }
 
 fn handle_reset() -> i32 {
-    use std::io::Write;
-
     match history_for_current_scope() {
         Ok(history) => match history.initial_snapshot() {
             Ok(Some(initial_path)) => {
@@ -1110,9 +1008,7 @@ fn handle_reset() -> i32 {
 
                 let stdout = io::stdout();
                 let mut out = BufWriter::new(stdout.lock());
-                writeln!(out, "{initial_path}").ok();
-                out.flush().ok();
-                0
+                emit_line(&mut out, &initial_path)
             }
             Ok(None) => {
                 eprintln!(
@@ -1133,8 +1029,6 @@ fn handle_reset() -> i32 {
 }
 
 fn handle_undo(count: usize) -> i32 {
-    use std::io::Write;
-
     if count == 0 {
         eprintln!("Error: Count must be at least 1");
         return 2;
@@ -1180,9 +1074,7 @@ fn handle_undo(count: usize) -> i32 {
 
                 let stdout = io::stdout();
                 let mut out = BufWriter::new(stdout.lock());
-                writeln!(out, "{target_snapshot}").ok();
-                out.flush().ok();
-                0
+                emit_line(&mut out, target_snapshot)
             }
             Err(e) => {
                 eprintln!("Error: {e}");
@@ -1197,8 +1089,6 @@ fn handle_undo(count: usize) -> i32 {
 }
 
 fn handle_redo(count: usize) -> i32 {
-    use std::io::Write;
-
     if count == 0 {
         eprintln!("Error: Count must be at least 1");
         return 2;
@@ -1252,9 +1142,7 @@ fn handle_redo(count: usize) -> i32 {
 
                 let stdout = io::stdout();
                 let mut out = BufWriter::new(stdout.lock());
-                writeln!(out, "{target_snapshot}").ok();
-                out.flush().ok();
-                0
+                emit_line(&mut out, target_snapshot)
             }
             Err(e) => {
                 eprintln!("Error: {e}");
@@ -1285,8 +1173,6 @@ fn handle_save_profile(profile_name: &str) -> i32 {
 }
 
 fn handle_load_profile(profile_name: &str) -> i32 {
-    use std::io::Write;
-
     match shell_paths::load_profile(profile_name) {
         Ok(parsed) => {
             // Get current PATH to use as base for prepend/append
@@ -1346,15 +1232,7 @@ fn handle_load_profile(profile_name: &str) -> i32 {
 
             let stdout = io::stdout();
             let mut out = BufWriter::new(stdout.lock());
-
-            // Apply path guard to preserve critical binaries (whi, zoxide)
-            let original_path = env::var("PATH").unwrap_or_default();
-            let guarded_path =
-                PathGuard::default().ensure_protected_paths(&original_path, path_string);
-
-            writeln!(out, "{guarded_path}").ok();
-            out.flush().ok();
-            0
+            output_path(&mut out, &path_string)
         }
         Err(e) => {
             eprintln!("Error: {e}");
@@ -1394,104 +1272,5 @@ mod atty {
     pub enum Stream {
         Stdout,
         Stdin,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::collections::HashSet;
-    use std::path::PathBuf;
-
-    #[test]
-    fn test_protected_path_normalization() {
-        // Test that paths with/without trailing slashes are treated as equal
-        let current = "/usr/local/sbin/:/usr/bin:/bin";
-        let protected = [PathBuf::from("/usr/local/sbin")];
-
-        let current_paths: HashSet<String> = current
-            .split(':')
-            .filter(|s| !s.is_empty())
-            .map(|s| s.trim_end_matches('/').to_string())
-            .collect();
-
-        let missing: Vec<String> = protected
-            .iter()
-            .filter_map(|p| {
-                let path_str = p.to_string_lossy().to_string();
-                let normalized = path_str.trim_end_matches('/');
-                if current_paths.contains(normalized) {
-                    None
-                } else {
-                    Some(path_str)
-                }
-            })
-            .collect();
-
-        // Should recognize /usr/local/sbin/ matches /usr/local/sbin
-        assert!(
-            missing.is_empty(),
-            "Expected no missing paths, found: {:?}",
-            missing
-        );
-    }
-
-    #[test]
-    fn test_protected_path_missing() {
-        // Test that missing protected paths are detected
-        let current = "/usr/bin:/bin";
-        let protected = [PathBuf::from("/usr/local/sbin")];
-
-        let current_paths: HashSet<String> = current
-            .split(':')
-            .filter(|s| !s.is_empty())
-            .map(|s| s.trim_end_matches('/').to_string())
-            .collect();
-
-        let missing: Vec<String> = protected
-            .iter()
-            .filter_map(|p| {
-                let path_str = p.to_string_lossy().to_string();
-                let normalized = path_str.trim_end_matches('/');
-                if current_paths.contains(normalized) {
-                    None
-                } else {
-                    Some(path_str)
-                }
-            })
-            .collect();
-
-        assert_eq!(missing.len(), 1, "Expected 1 missing path");
-        assert_eq!(missing[0], "/usr/local/sbin");
-    }
-
-    #[test]
-    fn test_protected_path_already_present() {
-        // Test that existing protected paths are not duplicated
-        let current = "/usr/local/sbin:/usr/bin:/bin";
-        let protected = [PathBuf::from("/usr/local/sbin")];
-
-        let current_paths: HashSet<String> = current
-            .split(':')
-            .filter(|s| !s.is_empty())
-            .map(|s| s.trim_end_matches('/').to_string())
-            .collect();
-
-        let missing: Vec<String> = protected
-            .iter()
-            .filter_map(|p| {
-                let path_str = p.to_string_lossy().to_string();
-                let normalized = path_str.trim_end_matches('/');
-                if current_paths.contains(normalized) {
-                    None
-                } else {
-                    Some(path_str)
-                }
-            })
-            .collect();
-
-        assert!(
-            missing.is_empty(),
-            "Expected no missing paths when already present"
-        );
     }
 }

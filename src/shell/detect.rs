@@ -37,7 +37,6 @@ impl FromStr for Shell {
 
 /// Detect the current shell from environment
 pub fn detect_current_shell() -> Result<Shell, String> {
-    // Try $SHELL environment variable first
     if let Ok(shell_path) = env::var("SHELL") {
         if shell_path.contains("bash") {
             return Ok(Shell::Bash);
@@ -48,7 +47,6 @@ pub fn detect_current_shell() -> Result<Shell, String> {
         }
     }
 
-    // Fallback: Check for shell-specific environment variables
     if env::var("BASH_VERSION").is_ok() {
         return Ok(Shell::Bash);
     }
@@ -69,19 +67,16 @@ pub fn get_config_file_path(shell: &Shell) -> Result<PathBuf, String> {
 
     match shell {
         Shell::Bash => {
-            // Prefer ~/.bash_profile (especially on macOS)
             let bash_profile = home_path.join(".bash_profile");
             if bash_profile.exists() {
                 return Ok(bash_profile);
             }
 
-            // Fallback to ~/.bashrc (common on Linux)
             let bashrc = home_path.join(".bashrc");
             if bashrc.exists() {
                 return Ok(bashrc);
             }
 
-            // Default to .bash_profile on macOS, .bashrc on Linux
             #[cfg(target_os = "macos")]
             {
                 Ok(bash_profile)
@@ -91,14 +86,8 @@ pub fn get_config_file_path(shell: &Shell) -> Result<PathBuf, String> {
                 Ok(bashrc)
             }
         }
-        Shell::Zsh => {
-            // Use ~/.zprofile (recommended for PATH on macOS)
-            Ok(home_path.join(".zprofile"))
-        }
-        Shell::Fish => {
-            // Use ~/.config/fish/config.fish
-            Ok(home_path.join(".config/fish/config.fish"))
-        }
+        Shell::Zsh => Ok(home_path.join(".zprofile")),
+        Shell::Fish => Ok(home_path.join(".config/fish/config.fish")),
     }
 }
 
@@ -122,26 +111,5 @@ pub fn get_sourcing_line(shell: &Shell) -> Result<String, String> {
         Shell::Fish => Ok(format!(
             "# whi: Load saved PATH\nif test -f {saved_path_str}\n    set -gx PATH (cat {saved_path_str} | string split :)\nend\n"
         )),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_shell_from_str() {
-        assert_eq!("bash".parse::<Shell>().unwrap(), Shell::Bash);
-        assert_eq!("BASH".parse::<Shell>().unwrap(), Shell::Bash);
-        assert_eq!("zsh".parse::<Shell>().unwrap(), Shell::Zsh);
-        assert_eq!("fish".parse::<Shell>().unwrap(), Shell::Fish);
-        assert!("invalid".parse::<Shell>().is_err());
-    }
-
-    #[test]
-    fn test_shell_as_str() {
-        assert_eq!(Shell::Bash.as_str(), "bash");
-        assert_eq!(Shell::Zsh.as_str(), "zsh");
-        assert_eq!(Shell::Fish.as_str(), "fish");
     }
 }

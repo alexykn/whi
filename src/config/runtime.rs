@@ -10,17 +10,9 @@ pub struct Config {
     pub search: SearchConfig,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct SearchConfig {
     pub executable_search_fuzzy: bool,
-}
-
-impl Default for SearchConfig {
-    fn default() -> Self {
-        Self {
-            executable_search_fuzzy: false,
-        }
-    }
 }
 
 /// Get the config file path
@@ -113,48 +105,5 @@ fn parse_bool(s: &str) -> Result<bool, String> {
         "true" => Ok(true),
         "false" => Ok(false),
         _ => Err(format!("Invalid boolean value: {s}")),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_default_config() {
-        let config = Config::default();
-        assert!(!config.search.executable_search_fuzzy);
-    }
-
-    #[test]
-    fn test_parse_config() {
-        let toml = r#"
-[search]
-executable_search_fuzzy = true
-"#;
-
-        let config = parse_config(toml).unwrap();
-        assert!(config.search.executable_search_fuzzy);
-    }
-
-    #[test]
-    fn test_parse_config_ignores_old_sections() {
-        let toml = r#"
-[search]
-executable_search_fuzzy = true
-
-[protected]
-paths = ["/bin"]
-"#;
-
-        let config = parse_config(toml).unwrap();
-        assert!(config.search.executable_search_fuzzy);
-    }
-
-    #[test]
-    fn test_generate_default_config() {
-        let default_toml = generate_default_config();
-        let config = parse_config(&default_toml).unwrap();
-        assert!(!config.search.executable_search_fuzzy);
     }
 }

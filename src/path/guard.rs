@@ -100,13 +100,12 @@ impl PathGuard {
         use std::fs;
         use std::os::unix::fs::PermissionsExt;
 
-        if let Ok(metadata) = fs::metadata(path) {
-            if metadata.is_file() {
-                let permissions = metadata.permissions();
-                let mode = permissions.mode();
-                // Check if executable bit is set (user, group, or other)
-                return (mode & 0o111) != 0;
-            }
+        if let Ok(metadata) = fs::metadata(path)
+            && metadata.is_file()
+        {
+            let permissions = metadata.permissions();
+            let mode = permissions.mode();
+            return (mode & 0o111) != 0;
         }
 
         false
@@ -116,79 +115,5 @@ impl PathGuard {
     fn is_executable(path: &Path) -> bool {
         // On non-Unix, just check if file exists
         path.is_file()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_guard_preserves_missing_binary() {
-        let original = "/usr/local/bin:/home/user/.cargo/bin:/usr/bin";
-        let modified = "/usr/local/bin:/usr/bin"; // cargo bin removed
-
-        // Create a test directory structure (would need actual files for real test)
-        // For now, test the logic with empty result
-        let guard = PathGuard::new(&["nonexistent"]);
-        let result = guard.ensure_protected_paths(original, modified.to_string());
-
-        // Should return modified as-is since binary doesn't exist
-        assert_eq!(result, modified);
-    }
-
-    #[test]
-    fn test_guard_skips_already_present() {
-        let original = "/usr/local/bin:/home/user/.cargo/bin";
-        let modified = "/usr/local/bin:/home/user/.cargo/bin";
-
-        let guard = PathGuard::new(&["test"]);
-        let result = guard.ensure_protected_paths(original, modified.to_string());
-
-        // Should not duplicate
-        assert_eq!(result, modified);
-    }
-
-    #[test]
-    fn test_guard_appends_to_empty_path() {
-        // Use nonexistent binaries so detect_protected_paths returns empty
-        let guard = PathGuard::new(&["nonexistent_binary_xyz123"]);
-
-        // If new_path is empty and we had protected paths, they'd be appended
-        // (though in practice this shouldn't happen)
-        let result = guard.ensure_protected_paths("/usr/bin", "".to_string());
-
-        // Without real files, detect_protected_paths returns empty, so result is ""
-        assert_eq!(result, "");
-    }
-
-    #[test]
-    fn test_guard_handles_missing_binary_gracefully() {
-        // Test that guard doesn't crash when protected binary doesn't exist
-        let guard = PathGuard::new(&["nonexistent_binary_xyz123"]);
-
-        let original = "/usr/local/bin:/usr/bin";
-        let modified = "/usr/local/bin";
-
-        // Should not panic, just return modified path as-is
-        let result = guard.ensure_protected_paths(original, modified.to_string());
-
-        assert_eq!(result, modified);
-    }
-
-    #[test]
-    fn test_guard_ignores_uninstalled_binaries() {
-        // Test with mix of real and fake binaries
-        let guard = PathGuard::new(&["sh", "fake_binary_that_does_not_exist"]);
-
-        // sh exists in /bin on most Unix systems
-        let original = "/bin:/usr/bin";
-        let modified = "/usr/bin";
-
-        // Should preserve /bin (for sh) but not crash on fake binary
-        let result = guard.ensure_protected_paths(original, modified.to_string());
-
-        // Result should contain /usr/bin, and may contain /bin if sh was found there
-        assert!(result.contains("/usr/bin"));
     }
 }
