@@ -4,7 +4,9 @@ use std::io::{self, BufWriter};
 use std::path::PathBuf;
 
 use crate::cli::args::ApplyTarget;
-use crate::commands::support::path_support::{emit_line, history_for_current_scope, output_path};
+use crate::commands::support::path_support::{
+    emit_line, guarded_path, history_for_current_scope, output_path,
+};
 use crate::config::{protected_paths, shell_paths};
 use crate::path::file::apply_path_sections;
 use crate::session::store::cleanup_old_sessions;
@@ -194,6 +196,16 @@ pub(super) fn handle_reset() -> i32 {
     }
 }
 
+fn validate_cursor_position(current_pos: usize, snapshot_len: usize) -> Result<(), String> {
+    if current_pos < snapshot_len {
+        return Ok(());
+    }
+
+    Err(format!(
+        "Cursor position {current_pos} exceeds history length {snapshot_len}"
+    ))
+}
+
 pub(super) fn handle_undo(count: usize) -> i32 {
     if count == 0 {
         eprintln!("Error: Count must be at least 1");
@@ -218,6 +230,11 @@ pub(super) fn handle_undo(count: usize) -> i32 {
                         return 2;
                     }
                 };
+
+                if let Err(e) = validate_cursor_position(current_pos, snapshots.len()) {
+                    eprintln!("Error: {e}");
+                    return 2;
+                }
 
                 if current_pos < count {
                     if current_pos == 0 {
@@ -282,9 +299,21 @@ pub(super) fn handle_redo(count: usize) -> i32 {
                     }
                 };
 
+                if let Err(e) = validate_cursor_position(current_pos, snapshots.len()) {
+                    eprintln!("Error: {e}");
+                    return 2;
+                }
+
                 let max_pos = snapshots.len() - 1;
-                if current_pos + count > max_pos {
-                    let available = max_pos - current_pos;
+                let Some(available) = max_pos.checked_sub(current_pos) else {
+                    eprintln!(
+                        "Error: Cursor position {current_pos} exceeds history length {}",
+                        snapshots.len()
+                    );
+                    return 2;
+                };
+
+                if count > available {
                     if available == 0 {
                         eprintln!("Error: Already at the latest state. Nothing to redo.");
                     } else {
@@ -380,9 +409,11 @@ pub(super) fn handle_load_profile(profile_name: &str) -> i32 {
                 }
             }
 
+            let guarded_path = guarded_path(&path_string);
+
             match history_for_current_scope() {
                 Ok(history) => {
-                    if let Err(e) = history.write_snapshot(&path_string) {
+                    if let Err(e) = history.write_snapshot(&guarded_path) {
                         eprintln!("Warning: Failed to write snapshot for loaded profile: {e}");
                     }
                 }
