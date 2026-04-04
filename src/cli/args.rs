@@ -138,12 +138,10 @@ pub fn parse_delete_arguments(tokens: Vec<String>) -> Result<Vec<DeleteTarget>, 
         return Ok(indices);
     }
 
-    if tokens.len() == 1 {
-        return Ok(vec![parse_delete_target(&tokens[0])]);
-    }
-
-    let joined = tokens.join(" ");
-    Ok(vec![parse_delete_target(&joined)])
+    Ok(tokens
+        .into_iter()
+        .map(|token| parse_delete_target(&token))
+        .collect())
 }
 
 fn parse_delete_target(target_str: &str) -> DeleteTarget {
