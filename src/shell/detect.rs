@@ -103,13 +103,14 @@ pub fn get_saved_path_file(shell: &Shell) -> Result<PathBuf, String> {
 pub fn get_sourcing_line(shell: &Shell) -> Result<String, String> {
     let saved_path_file = get_saved_path_file(shell)?;
     let saved_path_str = saved_path_file.display().to_string();
+    let shell_name = shell.as_str();
 
     match shell {
         Shell::Bash | Shell::Zsh => Ok(format!(
-            "# whi: Load saved PATH\n[ -f {saved_path_str} ] && export PATH=\"$(cat {saved_path_str})\"\n"
+            "# whi: Load saved PATH\nif [ -f {saved_path_str} ]; then\n    NEW_PATH=$(whi __load_saved_path {shell_name} 2>/dev/null)\n    [ -n \"$NEW_PATH\" ] && export PATH=\"$NEW_PATH\"\nfi\n"
         )),
         Shell::Fish => Ok(format!(
-            "# whi: Load saved PATH\nif test -f {saved_path_str}\n    set -gx PATH (cat {saved_path_str} | string split :)\nend\n"
+            "# whi: Load saved PATH\nif test -f {saved_path_str}\n    set -l new_path (whi __load_saved_path {shell_name} 2>/dev/null)\n    if test -n \"$new_path\"\n        set -gx PATH (string split : -- $new_path)\n    end\nend\n"
         )),
     }
 }
