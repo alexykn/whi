@@ -4,9 +4,14 @@
 
 Whi is path-only again.
 
+> **Deprecation notice for 0.7.0**
+> `whi` is intentionally dropping `whifile` activation, environment-variable management, and virtual-environment support so the project can stay focused on PATH management.
+> - If you still need those features, stay on `whi 0.6.x`.
+> - Legacy profile and saved PATH files may still contain `!env.*`, `!whi.extra`, or `ENV!` sections; `whi` will keep reading them for compatibility, but those directives are ignored and never rewritten.
+> - The follow-up project for the removed functionality will be `envy`.
+
 - Managed features: `prefer`, `add`, `move`, `switch`, `clean`, `delete`, `undo`, `redo`, `reset`, `diff`, `apply`, `save`, `load`, `list`, `rmp`, `shorthands`
 - Removed features: environment-variable management, `whifile` activation, and virtual environment management
-- Compatibility: old profile and saved PATH files that still contain `!env.*`, `!whi.extra`, or legacy `ENV!` sections are still readable, but those directives are ignored with a warning and are never rewritten automatically
 
 ## Install shell integration
 
