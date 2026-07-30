@@ -16,7 +16,7 @@ jobs:
     name: Quality
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.97.1
         with:
           components: clippy, rustfmt
@@ -33,6 +33,6 @@ jobs:
       matrix:
         os: [ubuntu-24.04, macos-14]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.97.1
       - run: cargo test --all-targets
