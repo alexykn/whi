@@ -125,12 +125,10 @@ pub fn parse_delete_arguments(tokens: Vec<String>) -> Result<Vec<DeleteTarget>, 
         return Err("delete requires at least one target".to_string());
     }
 
-    if tokens.iter().all(|t| {
-        t.parse::<usize>()
-            .ok()
-            .filter(|_| !looks_like_path(t))
-            .is_some()
-    }) {
+    if tokens
+        .iter()
+        .all(|t| t.parse::<usize>().ok().is_some_and(|_| !looks_like_path(t)))
+    {
         let indices = tokens
             .into_iter()
             .map(|t| DeleteTarget::Index(t.parse::<usize>().unwrap()))

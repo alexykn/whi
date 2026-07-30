@@ -137,7 +137,7 @@ pub fn cleanup_old_sessions() -> Result<usize, String> {
     }
 
     // Sort by modification time (oldest first)
-    session_files.sort_by(|a, b| a.1.cmp(&b.1));
+    session_files.sort_by_key(|entry| entry.1);
 
     // Delete oldest files until we have 30 or fewer
     let files_to_delete = session_files.len() - 30;
