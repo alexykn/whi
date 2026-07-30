@@ -55,7 +55,7 @@ jobs:
           cp LICENSE README.md "dist/$archive_dir/"
           cp "target/${{ matrix.target }}/release/whi" "dist/$archive_dir/"
           tar -C dist -czf "${{ matrix.asset }}.tar.gz" "$archive_dir"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.asset }}
           path: ${{ matrix.asset }}.tar.gz
