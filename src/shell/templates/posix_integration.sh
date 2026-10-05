@@ -1,9 +1,10 @@
 # whi shell integration for bash/zsh (path-only)
 
-__WHI_BIN="__WHI_BIN__"
-
+# The binary path is baked into the function body rather than held in a shell
+# variable: tools that snapshot and replay only functions and aliases (not
+# unexported variables) would otherwise end up executing an empty command.
 __whi_exec() {
-    "$__WHI_BIN" "$@"
+    "__WHI_BIN__" "$@"
 }
 
 __whi_apply_path() {
