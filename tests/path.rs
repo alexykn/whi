@@ -55,7 +55,7 @@ fn path_searcher_mutations() {
 
     let (cleaned, removed) = searcher.clean_duplicates();
     assert_eq!(cleaned, "/a:/b:/c:/d:/e");
-    assert!(removed.is_empty());
+    assert_eq!(removed, [] as [usize; 0]);
 }
 
 #[test]

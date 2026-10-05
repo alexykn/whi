@@ -127,7 +127,7 @@ pub fn parse_delete_arguments(tokens: Vec<String>) -> Result<Vec<DeleteTarget>, 
 
     if tokens
         .iter()
-        .all(|t| t.parse::<usize>().ok().is_some_and(|_| !looks_like_path(t)))
+        .all(|t| t.parse::<usize>().is_ok_and(|_| !looks_like_path(t)))
     {
         let indices = tokens
             .into_iter()

@@ -40,5 +40,5 @@ fn commands_runner_normalization() {
         })
         .collect();
 
-    assert!(missing.is_empty());
+    assert_eq!(missing, [] as [String; 0]);
 }
