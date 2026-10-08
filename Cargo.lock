@@ -157,9 +157,9 @@ checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 
 [[package]]
 name = "libc"
-version = "1.0.0-alpha.4"
+version = "1.0.0-alpha.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9d0f24f33af482526a4e3f9b47f0abb2c6377a1713c8aa4a8106994689a4cfa5"
+checksum = "ecfc42efee5fa7862fa4badf58bd49e673ada5589598c19152669bc7433fca84"
 
 [[package]]
 name = "linux-raw-sys"
@@ -263,7 +263,7 @@ name = "whi"
 version = "0.8.2"
 dependencies = [
  "clap",
- "libc 1.0.0-alpha.4",
+ "libc 1.0.0-alpha.5",
  "tempfile",
 ]
 
