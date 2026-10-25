@@ -40,7 +40,8 @@ jobs:
   # Dependabot's Cargo pull requests merge themselves once every check above
   # passes. Both the author and the latest pusher must be Dependabot, so a
   # person pushing to its branch disables the merge. Action updates change
-  # the workflows themselves and wait for a review.
+  # the workflows themselves and wait for a review, and so do updates that move
+  # a direct dependency to a semver-incompatible version.
   merge-dependabot:
     name: Merge Dependabot update
     needs: [quality, test]
@@ -52,9 +53,31 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      issues: write
       pull-requests: write
     steps:
+      # The check runs from the base branch, never from the pull request.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+      - name: Hold back breaking updates
+        id: breaking
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          git fetch -q origin "$HEAD_SHA"
+          git show "$HEAD_SHA:Cargo.lock" > "$RUNNER_TEMP/new.lock"
+          if python3 .github/scripts/breaking-deps.py Cargo.lock "$RUNNER_TEMP/new.lock"; then
+            exit 0
+          fi
+          echo "Semver-incompatible update; leaving it for a review."
+          gh label create breaking --color B60205 --description "Semver-incompatible dependency update" --force
+          gh pr edit "$PR_URL" --add-label breaking
+          echo "hold=true" >> "$GITHUB_OUTPUT"
       - name: Squash-merge the pull request
+        if: steps.breaking.outputs.hold != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           PR_URL: ${{ github.event.pull_request.html_url }}

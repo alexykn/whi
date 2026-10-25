@@ -2,7 +2,8 @@ name: Patch release
 
 # Publishes a patch release when everything merged since the last tag is a
 # dependency update: only Cargo.toml, Cargo.lock or .github/ changed, and at
-# least one Cargo file did. Feature releases stay manual.
+# least one Cargo file did. No direct dependency may have moved to a semver-incompatible version.
+# Feature releases stay manual.
 
 on:
   schedule:
@@ -53,6 +54,11 @@ jobs:
           fi
           if ! printf '%s\n' "$changed" | grep -qE '^Cargo\.(lock|toml)$'; then
             echo "Only CI files changed since $last."
+            exit 0
+          fi
+          git show "$last:Cargo.lock" > "$RUNNER_TEMP/released.lock"
+          if ! python3 .github/scripts/breaking-deps.py "$RUNNER_TEMP/released.lock" Cargo.lock; then
+            echo "Semver-incompatible dependency updates since $last; leaving the release to a person."
             exit 0
           fi
           IFS=. read -r major minor patch <<< "$version"
