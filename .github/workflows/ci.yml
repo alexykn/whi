@@ -37,16 +37,18 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.99.1
       - run: cargo test --all-targets
 
-  # Dependabot pull requests merge themselves once every check above passes.
-  # Both the author and the latest pusher must be Dependabot, so a person
-  # pushing to its branch disables the merge.
+  # Dependabot's Cargo pull requests merge themselves once every check above
+  # passes. Both the author and the latest pusher must be Dependabot, so a
+  # person pushing to its branch disables the merge. Action updates change
+  # the workflows themselves and wait for a review.
   merge-dependabot:
     name: Merge Dependabot update
     needs: [quality, test]
     if: >-
       github.event_name == 'pull_request' &&
       github.actor == 'dependabot[bot]' &&
-      github.event.pull_request.user.login == 'dependabot[bot]'
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      startsWith(github.head_ref, 'dependabot/cargo/')
     runs-on: ubuntu-24.04
     permissions:
       contents: write

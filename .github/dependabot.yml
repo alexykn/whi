@@ -1,7 +1,8 @@
 version: 2
 updates:
-  # One grouped pull request per ecosystem per week. CI merges it once the
-  # tests pass, and the daily patch-release workflow publishes Cargo changes.
+  # One grouped pull request per ecosystem per week. CI merges Cargo updates
+  # once the tests pass, and the daily patch-release workflow publishes them.
+  # Action updates change the workflows themselves and wait for a review.
   - package-ecosystem: cargo
     directory: /
     schedule:
@@ -21,3 +22,7 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+    ignore:
+      # Its ref is the Rust version to install, not the action's version.
+      # The toolchain moves deliberately, never through Dependabot.
+      - dependency-name: dtolnay/rust-toolchain
