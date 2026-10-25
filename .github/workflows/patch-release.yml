@@ -59,7 +59,7 @@ jobs:
           echo "current=$version" >> "$GITHUB_OUTPUT"
           echo "next=$major.$minor.$((patch + 1))" >> "$GITHUB_OUTPUT"
 
-      - uses: dtolnay/rust-toolchain@1.99.0
+      - uses: dtolnay/rust-toolchain@1.99.1
         if: steps.decide.outputs.next
 
       - name: Bump the version and test it
