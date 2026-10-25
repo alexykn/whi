@@ -1,0 +1,97 @@
+name: Patch release
+
+# Publishes a patch release when everything merged since the last tag is a
+# dependency update: only Cargo.toml, Cargo.lock or .github/ changed, and at
+# least one Cargo file did. Feature releases stay manual.
+
+on:
+  schedule:
+    - cron: "37 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: patch-release
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  prepare:
+    name: Prepare
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Decide whether to release
+        id: decide
+        run: |
+          last=$(git describe --tags --abbrev=0 --match 'v[0-9]*')
+          version=$(awk -F '"' '/^version = / { print $2; exit }' Cargo.toml)
+          if [ "v$version" != "$last" ]; then
+            echo "Cargo.toml is at $version but the last tag is $last; a manual release is in progress."
+            exit 0
+          fi
+          changed=$(git diff --name-only "$last" HEAD)
+          if [ -z "$changed" ]; then
+            echo "Nothing changed since $last."
+            exit 0
+          fi
+          if printf '%s\n' "$changed" | grep -qvE '^(Cargo\.(lock|toml)|\.github/.*)$'; then
+            echo "Changes beyond dependencies since $last; leaving the release to a person:"
+            printf '%s\n' "$changed"
+            exit 0
+          fi
+          if ! printf '%s\n' "$changed" | grep -qE '^Cargo\.(lock|toml)$'; then
+            echo "Only CI files changed since $last."
+            exit 0
+          fi
+          IFS=. read -r major minor patch <<< "$version"
+          echo "current=$version" >> "$GITHUB_OUTPUT"
+          echo "next=$major.$minor.$((patch + 1))" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@1.99.0
+        if: steps.decide.outputs.next
+
+      - name: Bump the version and test it
+        if: steps.decide.outputs.next
+        env:
+          CURRENT: ${{ steps.decide.outputs.current }}
+          NEXT: ${{ steps.decide.outputs.next }}
+        run: |
+          sed -i "0,/^version = \"$CURRENT\"/s//version = \"$NEXT\"/" Cargo.toml
+          cargo update --workspace
+          cargo test --locked --all-targets
+
+      - name: Commit, tag and push
+        id: tag
+        if: steps.decide.outputs.next
+        env:
+          NEXT: ${{ steps.decide.outputs.next }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "chore: bump version to $NEXT"
+          git tag "v$NEXT"
+          git push --atomic origin HEAD:main "v$NEXT"
+          echo "tag=v$NEXT" >> "$GITHUB_OUTPUT"
+
+  release:
+    name: Release
+    needs: prepare
+    if: needs.prepare.outputs.tag != ''
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.prepare.outputs.tag }}
+    permissions:
+      contents: write
+    secrets: inherit

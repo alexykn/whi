@@ -12,7 +12,7 @@ on:
       - Cargo.toml
       - .github/workflows/security.yml
   schedule:
-    - cron: "17 4 * * 1"
+    - cron: "17 4 * * *"
   workflow_dispatch:
 
 permissions:
@@ -29,3 +29,34 @@ jobs:
       - uses: rustsec/audit-check@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+
+  # The audit action opens an issue per advisory but never closes one. Close
+  # every open RUSTSEC issue whose advisory main's lockfile no longer has.
+  close-fixed-advisories:
+    name: Close fixed advisory issues
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - name: Close issues for advisories that no longer apply
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # cargo audit exits non-zero when it finds something; its JSON is
+          # still complete, and an unreadable report must close nothing.
+          cargo audit --json > audit.json || true
+          active=$(jq -er '[.vulnerabilities.list[].advisory.id,
+            (.warnings // {} | to_entries[] | .value[] | .advisory.id? // empty)]
+            | unique[]' audit.json) || active=""
+          jq -e '.vulnerabilities' audit.json > /dev/null || exit 1
+          gh issue list --state open --limit 200 --json number,title \
+            --jq '.[] | select(.title | test("^RUSTSEC-[0-9]{4}-[0-9]{4}:"))
+              | "\(.number) \(.title | split(":")[0])"' |
+          while read -r number id; do
+            if ! printf '%s\n' "$active" | grep -qx "$id"; then
+              gh issue close "$number" --comment "$id no longer affects main's Cargo.lock (cargo audit, $GITHUB_SHA)."
+            fi
+          done

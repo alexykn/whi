@@ -36,3 +36,24 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.99.0
       - run: cargo test --all-targets
+
+  # Dependabot pull requests merge themselves once every check above passes.
+  # Both the author and the latest pusher must be Dependabot, so a person
+  # pushing to its branch disables the merge.
+  merge-dependabot:
+    name: Merge Dependabot update
+    needs: [quality, test]
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.actor == 'dependabot[bot]' &&
+      github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Squash-merge the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: gh pr merge --squash --delete-branch "$PR_URL"

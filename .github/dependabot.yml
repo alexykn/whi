@@ -1,11 +1,23 @@
 version: 2
 updates:
+  # One grouped pull request per ecosystem per week. CI merges it once the
+  # tests pass, and the daily patch-release workflow publishes Cargo changes.
   - package-ecosystem: cargo
     directory: /
     schedule:
       interval: weekly
+    commit-message:
+      prefix: chore(deps)
+    groups:
+      cargo:
+        patterns: ["*"]
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    commit-message:
+      prefix: chore(deps)
+    groups:
+      actions:
+        patterns: ["*"]
