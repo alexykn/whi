@@ -7,10 +7,10 @@ updates:
     directory: /
     schedule:
       interval: weekly
-    # Only versions public for 3 days, so a malicious release has time to be
+    # Only versions public for 7 days, so a malicious release has time to be
     # caught and pulled first. Security updates skip the wait.
     cooldown:
-      default-days: 3
+      default-days: 7
     commit-message:
       prefix: chore(deps)
     groups:
@@ -24,10 +24,10 @@ updates:
     directory: /
     schedule:
       interval: weekly
-    # Only versions public for 3 days, so a malicious release has time to be
+    # Only versions public for 7 days, so a malicious release has time to be
     # caught and pulled first. Security updates skip the wait.
     cooldown:
-      default-days: 3
+      default-days: 7
     commit-message:
       prefix: chore(deps)
     groups:
